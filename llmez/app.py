@@ -26,13 +26,22 @@ class App:
         self.chat = ChatPanel(paned, self)
         paned.add(self.chat, weight=3)
         paned.add(self.monitor, weight=2)
-        root.after(100, lambda: paned.sashpos(0, int(root.winfo_width() * 0.6)))
+        self._place_sash(paned)
 
         self.sampler = MetricsSampler(self.client, lambda s: self.post(self._on_sample, s),
                                       interval=C.METRICS_INTERVAL_S)
         self.sampler.start()
         root.protocol("WM_DELETE_WINDOW", self.close)
         self._poll()
+
+    def _place_sash(self, paned, tries=0):
+        """Divisor chat|monitor al 60 %. Espera a que la ventana tenga ancho real:
+        antes de mapearse mide 1 px y el chat quedaría colapsado."""
+        width = paned.winfo_width()
+        if width > 200:
+            paned.sashpos(0, int(width * 0.6))
+        elif tries < 100:
+            self.root.after(50, self._place_sash, paned, tries + 1)
 
     def post(self, fn, *args):
         """Thread-safe: encola una llamada para ejecutarla en el hilo de Tk."""
