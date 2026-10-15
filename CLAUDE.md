@@ -39,7 +39,7 @@ llmez/think_parser.py      separa <think>…</think> mezclado en content (inclui
 llmez/repetition.py        detector de bucles (cola periódica / línea larga ×3) y recorte limpio
 llmez/markdown.py          markdown → tags de tk.Text (recursivo, tablas alineadas, enlaces)
 llmez/documents.py         texto plano y PDF (pdftotext, marcas de página, quita encabezados repetidos)
-llmez/retrieval.py         BM25 por página, combine() con embeddings, compact_labels()
+llmez/retrieval.py         fragmentos de ~800 caracteres con marca de página, BM25, combine() (70 % embeddings)
 llmez/semantic.py          SemanticIndex: embeddings con caché en ~/.cache/llmez, GPU/CPU
 llmez/conversation.py      guardar/abrir (JSON llmez-chat v1) y exportar a Markdown
 llmez/settings.py          ~/.config/llmez/settings.json, cada valor validado por tipo
@@ -80,7 +80,8 @@ tests/gui/run_all.sh [test_scripted …]                     # pruebas de interf
 - **Ordenanza 1877** (`~/Descargas/Ordenanza 1877.pdf`, 75 páginas, ~26.000 tokens): entera → 0/4; con búsqueda → 4/4 en los tres qwen3. Su sello repetido ("PABLO A. HUEL") confundía al modelo con el firmante.
 - **Embeddings:**
   - nomic-embed-text es peor que BM25 en castellano.
-  - qwen3-embedding:0.6b: el sinónimo "recibirse" pasa del puesto 22 al 1; combinado con BM25, el peor puesto es 5.
+  - qwen3-embedding:0.6b: el sinónimo "recibirse" pasa del puesto 22 al 1.
+- **Unidad de búsqueda:** páginas enteras no sirven con poco contexto, porque una página relevante pero larga no entra y se cuela otra. Con fragmentos de 800 caracteres y 70 % de peso a los embeddings, la respuesta llega al modelo en 12 de 12 preguntas con 600 a 4000 tokens. Con 50/50 eran 11 de 12; con RRF o con BM25 solo, 9 de 12.
   - Indexar 75 páginas: 60–170 s en GPU, 200–320 s en CPU. Cada pregunta en CPU: ~110 ms.
 
 ## Trampas conocidas
@@ -97,7 +98,7 @@ tests/gui/run_all.sh [test_scripted …]                     # pruebas de interf
 - Las pruebas de interfaz usan carpetas XDG temporales: nunca tocan la configuración, el registro ni la caché de Emilio.
 - **Chequear lo que depende de la app**, no la puntería del modelo: que llegue la página correcta, que el historial sea correcto. Comparar texto con `common.plain()` (sin tildes ni mayúsculas): "Soró" = "SORO".
 - **No correr dos pruebas de interfaz a la vez** (compiten por la GPU). Las largas, en segundo plano.
-- **Una prueba que no imprime su resumen es una falla.** Nunca filtrar la salida de forma que se escondan errores.
+- **Una prueba que no imprime su resumen es una falla.** Nunca filtrar la salida de forma que se escondan errores: guardar la salida completa de cada corrida en un archivo y después filtrar. Ya se perdieron dos fallas intermitentes de `test_ollama` por mirar solo `tail`.
 - **Contar caídas de Ollama** después de cada tanda: `journalctl -u ollama --since <hora> | grep -c 'CUDA error: out of memory'`.
 - Al medir códigos de salida, no hacerlo a través de un pipe (`$?` sería el de `tail`). Usar `${PIPESTATUS[0]}` o redirigir a un archivo.
 - **Revisar visualmente:** captura con `xdotool windowactivate` + `xfce4-screenshooter -w -s archivo.png` y mirarla. Varias fallas de diseño solo se vieron así.
@@ -105,7 +106,7 @@ tests/gui/run_all.sh [test_scripted …]                     # pruebas de interf
 
 ## Cierre de cada integración o tanda de pruebas: el informe
 
-Toda integración nueva o tanda de pruebas se cierra con **un único informe** que es a la vez descriptivo (qué se hizo y por qué), recopilatorio (todo lo probado y medido) y técnico (números, causas, commits). Formato por defecto: **`.docx` en `~/Descargas/`**, con el nombre `Informe de <tema> llmEZ - AAAA-MM-DD.docx`, salvo que Emilio pida otro formato o lugar. El primero fue `~/Descargas/Informe de pruebas llmEZ.docx` (2026-10-15).
+Toda integración nueva o tanda de pruebas se cierra con **un único informe** que es a la vez descriptivo (qué se hizo y por qué), recopilatorio (todo lo probado y medido) y técnico (números, causas, commits). Formato por defecto: **`.docx` en `~/Descargas/`**, con el nombre `Informe de <tema> llmEZ - AAAA-MM-DD.docx`, salvo que Emilio pida otro formato o lugar. Hechos hasta ahora: `Informe de pruebas llmEZ.docx` y `Informe de búsqueda por significado llmEZ - 2026-10-15.docx`, los dos en `~/Descargas/`. El venv con python-docx está en `~/.cache/llmez-tools/docxenv`.
 
 Estructura (adaptar al tema; omitir lo que no aplique):
 1. **Portada:** tema, período, commit probado, equipo.
