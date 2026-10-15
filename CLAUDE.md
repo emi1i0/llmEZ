@@ -21,7 +21,7 @@ App de escritorio en Python/Tkinter para experimentar con LLMs locales en Ollama
 
 - Dell Inspiron 7559: i7 de 4 núcleos / 8 hilos, 15,5 GiB de RAM, **GTX 960M de 4 GB** (driver 580, PRIME on-demand), Linux Mint 22.3 (Xfce).
 - Python 3.12 con venv en `.venv/`. Ollama 0.40.4 como servicio systemd en `localhost:11434`; log con `journalctl -u ollama`.
-- Modelos: qwen3:0.6b, qwen3:1.7b, qwen3:4b, smollm2:135m (chat); qwen3-embedding:0.6b (búsqueda por significado); nomic-embed-text (experimento descartado; ofrecer borrarlo).
+- Modelos: qwen3:0.6b, qwen3:1.7b, qwen3:4b, smollm2:135m (chat); qwen3-embedding:0.6b (búsqueda por significado). nomic-embed-text se probó, se descartó y se borró.
 - Node v24 está instalado con nvm, solo para su usuario. `pdftotext`, `soffice` y `xdotool` están disponibles. ImageMagick no está.
 - **`/tmp` se borra al reiniciar.** Nada que haya que conservar (pruebas, entornos, scripts) puede vivir solo ahí.
 
