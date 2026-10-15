@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import config as C
 from . import conversation, markdown
+from .documents import read_document
 from .log import log
 from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
@@ -396,29 +397,35 @@ class ChatPanel(ttk.Frame):
     # ------------------------------------------------- archivo / sistema
     def load_file(self):
         path = filedialog.askopenfilename(
-            parent=self, title="Elegí un archivo de texto",
-            filetypes=[("Texto", "*.txt *.md *.csv *.json *.py *.log *.html *.xml *.yaml *.yml"),
-                       ("Todos", "*")])
+            parent=self, title="Elegí un archivo de texto o PDF",
+            filetypes=[("Texto y PDF", "*.txt *.md *.pdf *.csv *.json *.py *.log *.html *.xml "
+                        "*.yaml *.yml"), ("PDF", "*.pdf"), ("Todos", "*")])
         if not path:
             return
-        try:
-            if os.path.getsize(path) > C.MAX_FILE_BYTES:
-                raise ValueError("pesa más de 2 MB; es demasiado para el contexto de un modelo local")
-            with open(path, "rb") as f:
-                raw = f.read()
-            if b"\x00" in raw:
-                raise ValueError("parece un archivo binario, no texto")
+        name = os.path.basename(path)
+        self._set_status(f"Leyendo {name}…")
+
+        def work():  # un PDF grande puede tardar: fuera del hilo de la UI
             try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                text = raw.decode("latin-1")
-        except (OSError, ValueError) as e:
-            messagebox.showerror("No se pudo cargar", f"{os.path.basename(path)}: {e}", parent=self)
+                text, kind = read_document(path)
+                self.app.post(self._on_document, name, text, kind, None)
+            except (OSError, ValueError) as e:
+                self.app.post(self._on_document, name, None, None, e)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_document(self, name, text, kind, err):
+        if err:
+            self._set_status("")
+            messagebox.showerror("No se pudo cargar", f"{name}: {err}", parent=self)
             return
-        self._set_file(os.path.basename(path), text)
+        self._set_file(name, text)
         approx_tokens = len(text) // 4
-        self._note(f"Archivo cargado: {self.file_name}, {len(text)} caracteres, "
+        self._set_status(f"{name} cargado")
+        self._note(f"Archivo cargado: {name} ({kind}), {len(text)} caracteres, "
                    f"~{approx_tokens} tokens (estimado).")
+        if "sin texto" in kind:
+            self._note("Aviso: algunas páginas no tienen texto (probablemente son imágenes "
+                       "escaneadas); el modelo no va a ver su contenido.", "warn")
         num_ctx = self._num_ctx() or C.DEFAULT_NUM_CTX
         if approx_tokens > num_ctx * 0.75:
             self._note(f"Aviso: el archivo probablemente no entra en un contexto de {num_ctx} "

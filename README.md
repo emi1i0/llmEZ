@@ -15,7 +15,7 @@ Es un proyecto personal de aprendizaje, pensado para entender qué pasa adentro 
 - Opción *Pensar*: `auto` (no manda el parámetro), `sí` (`think: true`) o `no` (`think: false`). Se bloquea sola en los modelos que no razonan (según `capabilities` de `/api/show`), así no aparece el error 400.
 - Contexto (`num_ctx`, 2048 por defecto), **temperatura** y **semilla** configurables.
 - **Info del modelo y estimación de VRAM**: familia, parámetros, cuantización, contexto máximo, y cuánto va a ocupar con el contexto elegido — si entra entero en la GPU, qué porcentaje quedaría en CPU si no, y el mayor contexto que entra. Se actualiza al cambiar el contexto, antes de cargar nada.
-- Cargar un archivo de texto que se inyecta en el prompt de sistema, con aviso si probablemente no entra en el contexto.
+- Cargar un **archivo de texto o PDF** que se inyecta en el prompt de sistema, con aviso si probablemente no entra en el contexto. Los PDF se convierten con `pdftotext` y cada página queda marcada (`--- página 3 ---`) para que el modelo pueda decir dónde está cada dato; si el PDF es escaneado (imágenes sin texto) la app lo avisa, porque haría falta OCR.
 - Aviso cuando la charla se acerca al límite de contexto (Ollama recortaría el principio, incluido el prompt de sistema).
 - **Corte automático de bucles**: si el modelo empieza a repetir lo mismo sin parar (en la respuesta o en el razonamiento), la app corta la generación, quita la parte repetida del historial y explica la causa probable. Se puede desactivar en *Opciones*.
 - **Regenerar** la última respuesta, **copiar**, y menú con clic derecho.
@@ -47,6 +47,7 @@ Si Ollama o `nvidia-smi` no están disponibles, la app no se rompe: muestra "n/d
 - Python 3.10 o superior con Tkinter (en Debian/Ubuntu/Mint: `sudo apt install python3-tk`).
 - Ollama corriendo (por defecto en `http://localhost:11434`; respeta la variable `OLLAMA_HOST`).
 - Opcional: GPU NVIDIA con `nvidia-smi` para el monitor de GPU y la estimación de VRAM.
+- Opcional: `pdftotext` para leer PDF (viene en `poppler-utils`; en Mint/Ubuntu suele estar instalado: `sudo apt install poppler-utils`).
 
 La única dependencia de pip es [psutil](https://pypi.org/project/psutil/), para leer CPU y RAM de forma portable. La interfaz es Tkinter, las llamadas HTTP usan `urllib` y los gráficos se dibujan a mano sobre `tk.Canvas` (sin matplotlib).
 
@@ -82,7 +83,7 @@ Si todavía no tenés modelos, bajalos desde *Modelos → Bajar / borrar modelos
 .venv/bin/python -m unittest discover -s tests -t .
 ```
 
-Cubren el separador de `<think>`, el detector de bucles (con salidas reales de smollm2 y qwen3), el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
+Cubren la lectura de PDF (con PDFs generados en el test), el separador de `<think>`, el detector de bucles (con salidas reales de smollm2 y qwen3), el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
 
 ## Ejecutable con PyInstaller
 
@@ -111,6 +112,7 @@ llmez/
 ├── repetition.py           detecta cuando el modelo entra en bucle
 ├── markdown.py             markdown mínimo → estilos de tk.Text
 ├── conversation.py         guardar / abrir / exportar charlas
+├── documents.py            leer texto plano y PDF (con pdftotext)
 ├── settings.py             preferencias en ~/.config/llmez
 ├── log.py                  registro en ~/.local/state/llmez
 ├── theme.py                tema oscuro de ttk
