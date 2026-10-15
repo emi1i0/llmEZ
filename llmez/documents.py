@@ -69,14 +69,43 @@ def read_pdf(path):
     empty = [i for i, p in enumerate(pages, 1) if len("".join(p.split())) < MIN_CHARS_PER_PAGE]
     if len(empty) == len(pages):
         raise ValueError("no tiene texto extraíble: parece escaneado (son imágenes) y haría falta OCR")
+    pages, removed = _strip_repeated_lines(pages)
     text = "\n\n".join(f"--- página {i} ---\n{_clean(p)}" for i, p in enumerate(pages, 1))
     if len(text) > C.MAX_FILE_BYTES:
         raise ValueError(f"el texto extraído ({len(text) // 1000} kB) es demasiado para el contexto")
     info = f"PDF de {len(pages)} página{'s' if len(pages) != 1 else ''}"
+    if removed:
+        info += f"; sin {removed} línea{'s' if removed != 1 else ''} de encabezado/pie repetida{'s' if removed != 1 else ''}"
     if empty:
         listed = ", ".join(map(str, empty[:8])) + ("…" if len(empty) > 8 else "")
         info += f"; sin texto en {len(empty)} (¿escaneadas?): {listed}"
     return text, info
+
+
+def _strip_repeated_lines(pages):
+    """Saca encabezados y pies de página (líneas que se repiten en la mayoría de las
+    páginas) y los números de página sueltos. Gastan tokens y confunden al modelo:
+    p. ej. el nombre de quien sella cada hoja parece ser el firmante."""
+    if len(pages) < 3:
+        return pages, 0
+    count = {}
+    for p in pages:
+        for key in {" ".join(l.split()) for l in p.splitlines() if l.strip()}:
+            count[key] = count.get(key, 0) + 1
+    repeated = {k for k, n in count.items() if n >= 0.6 * len(pages) and len(k) < 120}
+    by_length = sorted(repeated, key=len, reverse=True)
+
+    def is_header(line, page_no):
+        rest = " ".join(line.split())
+        if rest == str(page_no):
+            return True
+        for k in by_length:  # también "PABLO A. HUEL PABLO A. HUEL" (el sello dos veces)
+            rest = rest.replace(k, "")
+        return line.strip() != "" and rest.strip() == ""
+
+    out = [("\n".join(l for l in p.splitlines() if not is_header(l, i)))
+           for i, p in enumerate(pages, 1)]
+    return out, len(repeated)
 
 
 def _clean(page):

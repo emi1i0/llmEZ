@@ -14,6 +14,7 @@ from .log import log
 from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
 from .repetition import RepetitionDetector
+from .retrieval import CHARS_PER_TOKEN, Index, compact_labels, estimate_tokens
 from .think_parser import ThinkTagSplitter
 
 THINK_MODES = {"auto": None, "sí": True, "no": False}
@@ -83,6 +84,8 @@ class ChatPanel(ttk.Frame):
         self.model_infos = {}  # nombre → ModelInfo (caché de /api/show)
         self._preferred_model = settings["model"]
         self._think_enabled = True
+        self._index = None
+        self._chars_per_token = None  # medido en la última respuesta (ver _finish)
         self._build(settings)
         self._note("Elegí un modelo y escribí tu mensaje. Enter envía, Shift+Enter "
                    "agrega un salto de línea, Esc detiene. Clic derecho para más opciones.")
@@ -436,6 +439,7 @@ class ChatPanel(ttk.Frame):
 
     def _set_file(self, name, text):
         self.file_name, self.file_text = name, text
+        self._index = None  # se arma al primer uso si el archivo no entra en el contexto
         if text is None:
             self.file_label.configure(text="sin archivo", style="Muted.TLabel")
             self.remove_file_btn.configure(state="disabled")
@@ -472,11 +476,30 @@ class ChatPanel(ttk.Frame):
         ttk.Button(bar, text="Cancelar", command=win.destroy).pack(side="right", padx=6)
         ttk.Button(bar, text="Restaurar por defecto", command=reset).pack(side="left")
 
-    def _system_message(self):
+    def _system_message(self, query="", num_ctx=None):
+        """Mensaje de sistema con el archivo. Si el archivo no entra en el contexto, solo
+        las partes más relevantes para `query` (ver retrieval.py). Devuelve (mensaje, partes)."""
         text = self.system_prompt
+        parts = None
         if self.file_text is not None:
-            text += C.FILE_PROMPT_TEMPLATE.format(name=self.file_name, text=self.file_text)
-        return {"role": "system", "content": text} if text else None
+            body, note = self.file_text, ""
+            num_ctx = num_ctx or self._num_ctx() or C.DEFAULT_NUM_CTX
+            cpt = self._cpt()
+            used = estimate_tokens(text, cpt) + sum(estimate_tokens(m["content"], cpt) for m in self.messages)
+            budget = min(int(num_ctx * C.FILE_CONTEXT_SHARE), num_ctx - used - 1024)
+            if estimate_tokens(body, cpt) > budget:
+                if self._index is None:
+                    self._index = Index(self.file_text)
+                body, parts = self._index.select(query, max(budget, 300), chars_per_token=cpt)
+                total = f"{len(self._index.chunks)} {self._index.chunks[0][0].split()[0]}s"
+                note = C.FILE_EXCERPT_NOTE.format(parts=compact_labels(parts) if parts else "nada",
+                                                  total=total)
+            text += C.FILE_PROMPT_TEMPLATE.format(name=self.file_name, text=body, note=note)
+        return ({"role": "system", "content": text} if text else None), parts
+
+    def _cpt(self):
+        """Caracteres por token para estimar: el medido si hay, si no uno prudente."""
+        return self._chars_per_token or CHARS_PER_TOKEN
 
     def _num_ctx(self):
         try:
@@ -540,13 +563,24 @@ class ChatPanel(ttk.Frame):
     def _start(self, text, model, think, num_ctx, options):
         self.messages.append({"role": "user", "content": text})
         self._render_user(text)
+
+        history = [{"role": m["role"], "content": m["content"]} for m in self.messages]
+        # La pregunta anterior ayuda a encontrar páginas en preguntas de seguimiento ("¿y eso?").
+        prev_q = [m["content"] for m in self.messages[:-1] if m["role"] == "user"][-1:]
+        system, parts = self._system_message(" ".join(prev_q + [text]), num_ctx)
+        if parts is not None:
+            self._note(f"▸ El archivo no entra entero en el contexto: van las "
+                       f"{compact_labels(parts) if parts else '(ninguna)'} ({len(parts)} de "
+                       f"{len(self._index.chunks)}), elegidas por relevancia para la pregunta.")
+        messages = [m for m in [system] if m] + history
+        # Si la respuesta llena el contexto, Ollama no corta: sigue descartando el principio
+        # y el modelo delira. Se le pide parar donde se llena (done_reason "length").
+        prompt_est = sum(estimate_tokens(m["content"], self._cpt()) for m in messages)
+        options = dict(options, num_predict=max(256, num_ctx - prompt_est - 16))
+        payload = {"model": model, "stream": True, "options": options, "messages": messages}
         self._append(f"{model}\n", "asst_h")
         self.chat.mark_set("resp_start", "end-1c")
         self.chat.mark_gravity("resp_start", "left")
-
-        history = [{"role": m["role"], "content": m["content"]} for m in self.messages]
-        payload = {"model": model, "stream": True, "options": options,
-                   "messages": [m for m in [self._system_message()] if m] + history}
         if think is not None:
             payload["think"] = think
 
@@ -764,6 +798,19 @@ class ChatPanel(ttk.Frame):
         else:
             self.messages.append(reply)
 
+        pc = stats.get("prompt_count")
+        if pc and gen.prompt_chars and gen.prompt_chars // 4 <= 1.5 * pc:  # sin recorte de Ollama
+            self._chars_per_token = min(max(gen.prompt_chars / pc, 2.2), 4.5)
+        length_cut = bool(gen.final and gen.final.get("done_reason") == "length")
+        if length_cut:
+            used = (stats.get("prompt_count") or 0) + stats["eval_count"]
+            self._note(f"Aviso: la respuesta se cortó porque se llenó el contexto (~{used} de "
+                       f"{gen.num_ctx} tokens"
+                       + (", gran parte en razonamiento" if len(gen.thinking_text) > len(gen.content_text) else "")
+                       + "). Pasado ese punto Ollama descarta el principio y el modelo pierde el hilo. "
+                       "Subí 'Contexto', pedí una respuesta más corta"
+                       + (" o desactivá el razonamiento si el modelo lo respeta." if gen.thinking_text else "."),
+                       "warn")
         if gen.think is False and (gen.thinking_in_field or gen.thinking_in_content):
             self._note("Aviso: pediste think:false pero el modelo razonó igual. La app lo "
                        "separó (gris) y no lo guarda en el historial.", "warn")
@@ -784,7 +831,7 @@ class ChatPanel(ttk.Frame):
                        f"en silencio: procesó {stats['prompt_count']} tokens de ~{sent} o más. Se queda "
                        "con el final y descarta el resto, incluido el prompt de sistema y el principio "
                        "del archivo. Subí 'Contexto' o usá un archivo más chico.", "warn")
-        elif stats.get("prompt_count") and stats["prompt_count"] + stats["eval_count"] >= 0.9 * gen.num_ctx:
+        elif not length_cut and stats.get("prompt_count") and stats["prompt_count"] + stats["eval_count"] >= 0.9 * gen.num_ctx:
             self._note(f"Aviso: la charla ya usa ~{stats['prompt_count'] + stats['eval_count']} de "
                        f"{gen.num_ctx} tokens de contexto. Lo próximo puede recortar el principio "
                        "(incluido el prompt de sistema). Subí 'Contexto' o empezá una charla nueva.",

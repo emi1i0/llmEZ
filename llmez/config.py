@@ -38,16 +38,22 @@ SUGGESTED_MODELS = ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "gemma3:1b", "gemma3
                     "llama3.2:1b", "llama3.2:3b", "deepseek-r1:1.5b", "smollm2:360m")
 
 DEFAULT_SYSTEM_PROMPT = (
-    "Sos un asistente útil y claro. Respondé SIEMPRE en español, aunque la "
+    "Sos un asistente útil y claro. Respondé siempre en español, aunque la "
     "pregunta o el material adjunto estén en otro idioma. Si razonás antes de "
     "responder, razoná también en español."
 )
 
 FILE_PROMPT_TEMPLATE = (
     "\n\nEl usuario adjuntó el archivo «{name}». Usalo como fuente principal "
-    "para responder sus preguntas; si la respuesta no está en el archivo, decilo."
-    "\n\n<archivo nombre=\"{name}\">\n{text}\n</archivo>"
+    "para responder sus preguntas; si la respuesta no está en el archivo, decilo. "
+    "Si el texto tiene marcas \"--- página N ---\", indicá de qué página sacás cada dato."
+    "{note}\n\n<archivo nombre=\"{name}\">\n{text}\n</archivo>"
 )
+# Si el archivo no entra en el contexto se mandan solo las partes relevantes.
+FILE_EXCERPT_NOTE = (" Del archivo (que es largo) se incluyen solo {parts} de {total}, "
+                     "elegidas por relevancia para la pregunta; si el dato no aparece, puede "
+                     "estar en otra parte del archivo.")
+FILE_CONTEXT_SHARE = 0.6  # parte del contexto que puede ocupar el archivo
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
