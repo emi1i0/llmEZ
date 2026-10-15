@@ -111,6 +111,7 @@ Toda integración nueva o tanda de pruebas se cierra con **un único informe** q
 Estructura (adaptar al tema; omitir lo que no aplique):
 1. **Portada:** tema, período, commit probado, equipo.
 2. **Resumen:** qué se logró y los hallazgos principales, en 5–8 puntos con números.
+2b. **Guía didáctica** cuando el informe trate un tema técnico nuevo (por ejemplo embeddings, caché KV, cuantización). Va antes de la parte técnica, para alguien que aprende: qué es, para qué sirve y cómo funciona, con analogías y un ejemplo concreto con datos del propio proyecto (p. ej. dos preguntas y la página que encuentra cada búsqueda), qué significan los números que aparecen después (puesto, dimensión, similitud) y un glosario corto. Lenguaje llano; las fórmulas, si hacen falta, después de la intuición.
 3. **Contexto y objetivo:** qué problema se atacó y por qué.
 4. **Qué se hizo:** cambios en la app, decisiones de diseño y alternativas descartadas, con el motivo medido.
 5. **Metodología:** qué pruebas (unitarias, de interfaz, contra Ollama real, documentos reales) y con qué configuración.
