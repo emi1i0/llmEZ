@@ -65,6 +65,7 @@ class Generation:
         self.loop = None  # (tipo de texto, descripción) si se cortó por bucle
         self.temperature = None  # la pedida; None = la del modelo
         self.seed = None
+        self.prompt_chars = 0  # tamaño de lo enviado, para detectar si Ollama lo recortó
 
 
 class ChatPanel(ttk.Frame):
@@ -421,8 +422,9 @@ class ChatPanel(ttk.Frame):
         num_ctx = self._num_ctx() or C.DEFAULT_NUM_CTX
         if approx_tokens > num_ctx * 0.75:
             self._note(f"Aviso: el archivo probablemente no entra en un contexto de {num_ctx} "
-                       "tokens. Ollama recorta el principio de la conversación cuando se pasa, "
-                       "así que el modelo puede perder el prompt de sistema o parte del archivo. "
+                       "tokens. Cuando se pasa, Ollama se queda solo con el final (hasta la mitad del "
+                       "contexto) y descarta el resto: el modelo pierde el prompt de sistema y el "
+                       "principio del archivo. "
                        "Subí 'Contexto' (ojo: más contexto = más VRAM).", "warn")
 
     def _set_file(self, name, text):
@@ -542,6 +544,7 @@ class ChatPanel(ttk.Frame):
             payload["think"] = think
 
         gen = Generation(model, think, num_ctx)
+        gen.prompt_chars = sum(len(m["content"]) for m in payload["messages"])
         gen.exclusive = self.app.exclusive_var.get()
         gen.temperature = options.get("temperature")
         gen.seed = options.get("seed")
@@ -768,7 +771,13 @@ class ChatPanel(ttk.Frame):
         if gen.freed:
             names, secs = gen.freed
             self._note(f"▸ VRAM liberada antes de cargar: {', '.join(names)} ({fmt_seconds(secs)})")
-        if stats.get("prompt_count") and stats["prompt_count"] + stats["eval_count"] >= 0.9 * gen.num_ctx:
+        sent = gen.prompt_chars // 4  # cota baja: en castellano suele haber más tokens que esto
+        if stats.get("prompt_count") and sent > 1.5 * stats["prompt_count"] and sent > gen.num_ctx // 2:
+            self._note(f"Aviso: el prompt no entraba en el contexto ({gen.num_ctx}) y Ollama lo recortó "
+                       f"en silencio: procesó {stats['prompt_count']} tokens de ~{sent} o más. Se queda "
+                       "con el final y descarta el resto, incluido el prompt de sistema y el principio "
+                       "del archivo. Subí 'Contexto' o usá un archivo más chico.", "warn")
+        elif stats.get("prompt_count") and stats["prompt_count"] + stats["eval_count"] >= 0.9 * gen.num_ctx:
             self._note(f"Aviso: la charla ya usa ~{stats['prompt_count'] + stats['eval_count']} de "
                        f"{gen.num_ctx} tokens de contexto. Lo próximo puede recortar el principio "
                        "(incluido el prompt de sistema). Subí 'Contexto' o empezá una charla nueva.",
