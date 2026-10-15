@@ -1,0 +1,261 @@
+{
+  "description": "Set de evaluación de la búsqueda en documentos largos. Cada pregunta tiene un 'needle': texto exacto que identifica el fragmento con la respuesta. Se mide si ese fragmento llega al modelo, no si el modelo acierta. Tipos: directa (comparte palabras con el documento), parafrasis (usa otras palabras), ausente (el dato no está; no entra en las métricas de búsqueda).",
+  "documents": {
+    "ordenanza": {
+      "path": "~/Descargas/Ordenanza 1877.pdf",
+      "source": "Ordenanza 1877 de la UTN (diseño curricular de Ingeniería en Sistemas de Información, Plan 2023), PDF del usuario"
+    },
+    "constitucion": {
+      "path": "~/.cache/llmez-tools/eval/docs/constitucion.pdf",
+      "url": "https://argentina.gob.ar/sites/default/files/constitucion_de_la_nacion_argentina.pdf",
+      "source": "Constitución de la Nación Argentina (Ley 24.430), texto oficial, 22 páginas"
+    },
+    "fotosintesis": {
+      "path": "~/.cache/llmez-tools/eval/docs/fotosintesis.txt",
+      "url": "https://es.wikipedia.org/w/index.php?title=Fotos%C3%ADntesis&oldid=175823460",
+      "source": "Artículo 'Fotosíntesis' de Wikipedia en español, revisión 175823460 (sin vandalismo; la actual decía 'se toman fotos'), CC BY-SA 4.0, convertido a texto plano"
+    }
+  },
+  "questions": [
+    {
+      "doc": "ordenanza",
+      "type": "parafrasis",
+      "q": "¿Cuánto tiempo lleva recibirse?",
+      "needle": "5 (cinco)"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "parafrasis",
+      "q": "¿Qué materia junta todo lo aprendido al final de la carrera?",
+      "needle": "Proyecto Final"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Quién firma la ordenanza como Rector?",
+      "needle": "SORO"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Qué título intermedio otorga la carrera?",
+      "needle": "Intermedio: Analista"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Cuántas horas reloj dura la carrera?",
+      "needle": "3992"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Cuál es la carga horaria de la asignatura Bases de Datos?",
+      "needle": "Bases de Datos"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Cuántas horas tiene la Práctica Profesional Supervisada?",
+      "needle": "Supervisada"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Cuántas horas mínimas de formación experimental se exigen?",
+      "needle": "288"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Qué establece el alcance AL7 del título?",
+      "needle": "AL7"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "parafrasis",
+      "q": "¿Hay que ir a clase o se puede cursar a distancia?",
+      "needle": "presencial"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "parafrasis",
+      "q": "¿Cuántos años dura?",
+      "needle": "5 (cinco)"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "directa",
+      "q": "¿Quién es el secretario del Consejo Superior?",
+      "needle": "ROSSO"
+    },
+    {
+      "doc": "ordenanza",
+      "type": "ausente",
+      "q": "¿Cuánto cuesta la matrícula de la carrera?",
+      "needle": null
+    },
+    {
+      "doc": "constitucion",
+      "type": "directa",
+      "q": "¿Cuánto duran los diputados en su mandato?",
+      "needle": "Los diputados durarán en su representación por cuatro años"
+    },
+    {
+      "doc": "constitucion",
+      "type": "directa",
+      "q": "¿Qué edad hay que tener para ser senador?",
+      "needle": "tener la edad de treinta años"
+    },
+    {
+      "doc": "constitucion",
+      "type": "directa",
+      "q": "¿Cuánto dura el mandato del Presidente?",
+      "needle": "duran en sus funciones el término de cuatro años"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Se puede castigar a alguien sin hacerle un juicio?",
+      "needle": "Ningún habitante de la Nación puede ser penado sin juicio previo"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Hay personas con privilegios por haber nacido en una familia importante?",
+      "needle": "no admite prerrogativas de sangre"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Pueden los ciudadanos proponer leyes ellos mismos?",
+      "needle": "derecho de iniciativa para presentar proyectos de ley"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Qué protección tienen las personas que compran productos o contratan servicios?",
+      "needle": "Los consumidores y usuarios de bienes y servicios"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Tenemos derecho a vivir en un lugar no contaminado?",
+      "needle": "derecho a un ambiente sano"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Con qué porcentaje de votos gana un candidato a presidente sin ir a segunda vuelta?",
+      "needle": "cuarenta y cinco por ciento"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Cuántas veces seguidas puede ser reelegido el presidente?",
+      "needle": "por un solo período consecu"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Qué le garantiza la Constitución a quien trabaja?",
+      "needle": "condiciones dignas y equitativas de labor"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Quién elige al jefe de gobierno porteño?",
+      "needle": "jefe de gobierno será elegido dire"
+    },
+    {
+      "doc": "constitucion",
+      "type": "parafrasis",
+      "q": "¿Puede un grupo armado presentar reclamos en nombre del pueblo?",
+      "needle": "Toda fuerza armada o reunión de personas"
+    },
+    {
+      "doc": "constitucion",
+      "type": "ausente",
+      "q": "¿Cuál es el salario mínimo vigente?",
+      "needle": null
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "directa",
+      "q": "¿Quién ganó el Premio Nobel de Química de 1961 por estudiar la fotosíntesis?",
+      "needle": "Melvin Calvin inició sus estudios"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "directa",
+      "q": "¿Cuál es la ecuación general de la fotosíntesis?",
+      "needle": "6 CO2 + 6 H2O → C6H12O6 + 6 O2"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "directa",
+      "q": "¿Qué enzima fija el dióxido de carbono en el ciclo de Calvin?",
+      "needle": "gracias a la enzima RuBisCO"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "directa",
+      "q": "¿Qué significa la sigla CAM?",
+      "needle": "metabolismo ácido de las crasuláceas"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿De dónde sale el oxígeno que liberan las plantas?",
+      "needle": "el oxígeno liberado en la fotosíntesis provenía del agua"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Qué científico mostró en el siglo XVIII que los vegetales producen oxígeno?",
+      "needle": "estableció la producción de oxígeno por los vegetales"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Por dónde entra el dióxido de carbono a las hojas?",
+      "needle": "a través de los estomas"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Cómo hacen las plantas de climas tropicales para fijar carbono?",
+      "needle": "En los vegetales propios de las zonas con clima tropical"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Existe algún animal que aproveche la fotosíntesis?",
+      "needle": "Elysia chlorotica, una babosa marina"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Cuántos cloroplastos tiene una célula de una hoja?",
+      "needle": "entre cincuenta y sesenta cloroplastos"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Qué pasa con la fotosíntesis cuando hace demasiado calor?",
+      "needle": "desnaturalización enzimática"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "parafrasis",
+      "q": "¿Qué rendimiento tienen los paneles solares que imitan a las plantas?",
+      "needle": "en torno al 11 % en un laboratorio"
+    },
+    {
+      "doc": "fotosintesis",
+      "type": "ausente",
+      "q": "¿Cuánto oxígeno produce por año el Amazonas?",
+      "needle": null
+    }
+  ]
+}
