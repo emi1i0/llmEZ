@@ -16,3 +16,6 @@ dist/
 .idea/
 *.swp
 .DS_Store
+
+# Contexto para Claude (solo local)
+CLAUDE.md
