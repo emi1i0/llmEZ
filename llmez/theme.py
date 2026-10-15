@@ -23,6 +23,8 @@ def apply(root):
     style.configure("TLabel", background=C.BG, foreground=C.FG)
     style.configure("Muted.TLabel", foreground=C.MUTED)
     style.configure("Warn.TLabel", foreground=C.WARN_COLOR)
+    style.configure("Ok.TLabel", foreground=C.GPU_COLOR)
+    style.configure("Bad.TLabel", foreground=C.ERROR_COLOR)
     style.configure("Section.TLabel", foreground=C.FG, font=(family, 10, "bold"))
     style.configure("Value.TLabel", foreground=C.FG, font=(family, 10, "bold"))
 
@@ -65,6 +67,9 @@ def apply(root):
     style.configure("TScrollbar", background=C.PANEL, troughcolor=C.BG,
                     bordercolor=C.BG, arrowcolor=C.MUTED)
     style.map("TScrollbar", background=[("active", C.FIELD)])
+    style.configure("TProgressbar", background=C.ACCENT, troughcolor=C.FIELD,
+                    bordercolor=C.BORDER, lightcolor=C.ACCENT, darkcolor=C.ACCENT)
+    style.configure("TSeparator", background=C.BORDER)
     style.configure("TPanedwindow", background=C.BG)
     style.configure("Sash", sashthickness=6, gripcount=0, background=C.BORDER)
     return family

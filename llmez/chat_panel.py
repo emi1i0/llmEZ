@@ -8,16 +8,26 @@ import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
 from . import config as C
+from . import conversation, markdown
+from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
 from .think_parser import ThinkTagSplitter
 
 THINK_MODES = {"auto": None, "sí": True, "no": False}
+CHAT_FILETYPES = [("Charla llmEZ", "*.json"), ("Todos", "*")]
 
 
 def fmt_seconds(v):
     if v is None:
         return "n/d"
     return f"{v * 1000:.0f} ms" if v < 1 else f"{v:.2f} s"
+
+
+def stats_line(st):
+    rate = f"{st['tok_s']:.1f} tok/s" if st.get("tok_s") else "n/d tok/s"
+    approx = " (aprox., cortada)" if st.get("approx") else ""
+    return (f"▸ {st['eval_count']} tokens · {rate} · primer token "
+            f"{fmt_seconds(st.get('ttft'))} · total {fmt_seconds(st.get('total_s'))}{approx}")
 
 
 class Generation:
@@ -36,6 +46,7 @@ class Generation:
         self.recent = collections.deque()  # tiempos de chunks para tok/s en vivo
         self.thinking_text = ""
         self.content_text = ""
+        self.content_marked = False  # se fijó la marca "content_start"
         self.splitter = ThinkTagSplitter()
         self.last_kind = None
         self.pending_ws = ""
@@ -47,23 +58,32 @@ class Generation:
 
 
 class ChatPanel(ttk.Frame):
-    def __init__(self, master, app):
+    def __init__(self, master, app, settings):
         super().__init__(master, padding=(8, 8, 4, 8))
         self.app = app
         self.client = app.client
-        self.messages = []  # historial sin el mensaje de sistema
-        self.system_prompt = C.DEFAULT_SYSTEM_PROMPT
+        self.messages = []  # historial; role/content van al modelo, el resto es metadata
+        self.system_prompt = settings["system_prompt"]
         self.file_name = None
         self.file_text = None
         self.gen = None
-        self._build()
+        self.model_sizes = {}  # nombre → bytes del archivo (de /api/tags)
+        self.model_infos = {}  # nombre → ModelInfo (caché de /api/show)
+        self._preferred_model = settings["model"]
+        self._think_enabled = True
+        self._build(settings)
         self._note("Elegí un modelo y escribí tu mensaje. Enter envía, Shift+Enter "
-                   "agrega un salto de línea, Esc detiene la generación.")
+                   "agrega un salto de línea, Esc detiene. Clic derecho para más opciones.")
         self.refresh_models()
 
+    @property
+    def model_names(self):
+        return list(self.model_sizes)
+
     # ------------------------------------------------------------------ UI
-    def _build(self):
+    def _build(self, s):
         family = tkfont.nametofont("TkDefaultFont").actual("family")
+        mono = tkfont.nametofont("TkFixedFont").actual("family")
         text_font = (family, 11)
 
         row1 = ttk.Frame(self)
@@ -71,41 +91,56 @@ class ChatPanel(ttk.Frame):
         ttk.Label(row1, text="Modelo").pack(side="left")
         self.model_var = tk.StringVar()
         self.model_cb = ttk.Combobox(row1, textvariable=self.model_var,
-                                     state="readonly", width=20)
+                                     state="readonly", width=18)
         self.model_cb.pack(side="left", padx=(4, 2))
-        self.refresh_btn = ttk.Button(row1, text="↻", width=3, command=self.refresh_models)
-        self.refresh_btn.pack(side="left", padx=(0, 12))
+        self.model_cb.bind("<<ComboboxSelected>>", lambda e: self._on_model_changed())
+        ttk.Button(row1, text="↻", width=3, command=self.refresh_models).pack(
+            side="left", padx=(0, 10))
 
         ttk.Label(row1, text="Pensar").pack(side="left")
-        self.think_var = tk.StringVar(value="auto")
+        self.think_var = tk.StringVar(value=s["think"] if s["think"] in THINK_MODES else "auto")
         self.think_cb = ttk.Combobox(row1, textvariable=self.think_var, state="readonly",
                                      values=list(THINK_MODES), width=5)
-        self.think_cb.pack(side="left", padx=(4, 12))
+        self.think_cb.pack(side="left", padx=(4, 10))
 
         ttk.Label(row1, text="Contexto").pack(side="left")
-        self.ctx_var = tk.StringVar(value=str(C.DEFAULT_NUM_CTX))
+        self.ctx_var = tk.StringVar(value=str(s["num_ctx"]))
         self.ctx_spin = ttk.Spinbox(row1, textvariable=self.ctx_var, width=7,
                                     values=C.NUM_CTX_CHOICES)
-        self.ctx_spin.pack(side="left", padx=(4, 12))
+        self.ctx_spin.pack(side="left", padx=(4, 10))
+        self.ctx_var.trace_add("write", lambda *a: self.refresh_estimate())
 
-        self.exclusive_var = tk.BooleanVar(value=C.EXCLUSIVE_VRAM)
-        self.exclusive_chk = ttk.Checkbutton(row1, text="Solo un modelo en VRAM",
-                                             variable=self.exclusive_var)
-        self.exclusive_chk.pack(side="left")
+        ttk.Label(row1, text="Temp.").pack(side="left")
+        self.temp_var = tk.StringVar(value=s["temperature"])
+        self.temp_spin = ttk.Spinbox(row1, textvariable=self.temp_var, width=5,
+                                     from_=0.0, to=2.0, increment=0.1, format="%.1f")
+        self.temp_spin.pack(side="left", padx=(4, 10))
+
+        ttk.Label(row1, text="Semilla").pack(side="left")
+        self.seed_var = tk.StringVar(value=s["seed"])
+        self.seed_entry = ttk.Entry(row1, textvariable=self.seed_var, width=7)
+        self.seed_entry.pack(side="left", padx=(4, 0))
 
         row2 = ttk.Frame(self)
-        row2.pack(fill="x", pady=(6, 6))
+        row2.pack(fill="x", pady=(6, 2))
         ttk.Button(row2, text="Cargar archivo…", command=self.load_file).pack(side="left")
         self.remove_file_btn = ttk.Button(row2, text="Quitar", command=self.remove_file,
                                           state="disabled")
         self.remove_file_btn.pack(side="left", padx=(4, 6))
         self.file_label = ttk.Label(row2, text="sin archivo", style="Muted.TLabel")
         self.file_label.pack(side="left")
-        self.unload_btn = ttk.Button(row2, text="Descargar modelos de VRAM",
-                                     command=self.unload_models)
-        self.unload_btn.pack(side="right")
+        ttk.Button(row2, text="Descargar modelos de VRAM",
+                   command=self.unload_models).pack(side="right")
         ttk.Button(row2, text="Prompt de sistema…",
                    command=self.edit_system_prompt).pack(side="right", padx=6)
+
+        # Info del modelo y estimación de VRAM
+        self.info_label = ttk.Label(self, text="", style="Muted.TLabel", anchor="w")
+        self.info_label.pack(fill="x", pady=(4, 0))
+        self.vram_label = ttk.Label(self, text="", style="Muted.TLabel", anchor="w")
+        self.vram_label.pack(fill="x", pady=(0, 6))
+        for label in (self.info_label, self.vram_label):
+            label.bind("<Configure>", lambda e: e.widget.configure(wraplength=max(e.width - 4, 100)))
 
         # Área de conversación
         box = ttk.Frame(self)
@@ -128,6 +163,17 @@ class ChatPanel(ttk.Frame):
         self.chat.tag_configure("meta", foreground=C.MUTED, font=(family, 9))
         self.chat.tag_configure("warn", foreground=C.WARN_COLOR, font=(family, 9))
         self.chat.tag_configure("error", foreground=C.ERROR_COLOR)
+        markdown.configure_tags(self.chat, family, mono, 11, C.FG, C.MUTED, C.FIELD, C.ACCENT)
+
+        self.menu = tk.Menu(self, tearoff=0, bg=C.FIELD, fg=C.FG, activebackground=C.ACCENT_DIM,
+                            activeforeground=C.FG, bd=0)
+        self.menu.add_command(label="Copiar", command=self.copy_selection)
+        self.menu.add_command(label="Copiar última respuesta", command=self.copy_last_response)
+        self.menu.add_command(label="Seleccionar todo",
+                              command=lambda: self.chat.tag_add("sel", "1.0", "end"))
+        self.menu.add_separator()
+        self.menu.add_command(label="Regenerar última respuesta", command=self.regenerate)
+        self.chat.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
 
         # Entrada y botones
         bottom = ttk.Frame(self)
@@ -162,6 +208,15 @@ class ChatPanel(ttk.Frame):
         if at_bottom:
             self.chat.see("end")
 
+    def _append_markdown(self, text):
+        at_bottom = self.chat.yview()[1] >= 0.999
+        self.chat.configure(state="normal")
+        for txt, tags in markdown.parse(text):
+            self.chat.insert("end", txt, ("content",) + tags)
+        self.chat.configure(state="disabled")
+        if at_bottom:
+            self.chat.see("end")
+
     def _note(self, text, tag="meta"):
         self._append(text + "\n", tag)
 
@@ -171,10 +226,11 @@ class ChatPanel(ttk.Frame):
     def _set_busy(self, busy):
         self.send_btn.configure(state="disabled" if busy else "normal")
         self.stop_btn.configure(state="normal" if busy else "disabled")
-        for w in (self.model_cb, self.think_cb):
-            w.configure(state="disabled" if busy else "readonly")
-        self.ctx_spin.configure(state="disabled" if busy else "normal")
-        self.exclusive_chk.configure(state="disabled" if busy else "normal")
+        self.model_cb.configure(state="disabled" if busy else "readonly")
+        self.think_cb.configure(
+            state="readonly" if not busy and self._think_enabled else "disabled")
+        for w in (self.ctx_spin, self.temp_spin, self.seed_entry):
+            w.configure(state="disabled" if busy else "normal")
 
     def _on_enter(self, event):
         if event.state & 0x1:  # Shift: salto de línea normal
@@ -193,17 +249,117 @@ class ChatPanel(ttk.Frame):
                 self.app.post(self._on_models, [], e)
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_models(self, names, err):
+    def _on_models(self, models, err):
+        self.model_sizes = {m["name"]: m.get("size", 0) for m in models}
+        self.model_infos.clear()  # pudieron cambiar (pull/borrado)
+        names = self.model_names
         self.model_cb.configure(values=names)
         if err:
             self._set_status(f"Ollama no disponible: {err}")
             self._note(f"Aviso: Ollama no responde ({err}). Revisá el servicio "
                        "(systemctl status ollama) y tocá ↻.", "warn")
             return
-        if self.model_var.get() not in names:
-            self.model_var.set(names[0] if names else "")
+        current = self.model_var.get()
+        if current not in names:
+            if self._preferred_model in names:
+                current = self._preferred_model
+            else:
+                current = names[0] if names else ""
+            self.model_var.set(current)
         self._set_status(f"{len(names)} modelos disponibles" if names
-                         else "Ollama responde pero no hay modelos (ollama pull …)")
+                         else "Ollama responde pero no hay modelos (Modelos → Bajar modelo…)")
+        self._on_model_changed()
+
+    def _on_model_changed(self):
+        model = self.model_var.get()
+        if not model:
+            self.info_label.configure(text="")
+            self.vram_label.configure(text="")
+            return
+        if model in self.model_infos:
+            self._show_model_info()
+            return
+        self.info_label.configure(text=f"{model}: consultando información…")
+
+        def work():
+            try:
+                info = ModelInfo(model, self.client.show(model), self.model_sizes.get(model))
+                self.app.post(self._on_model_info, model, info, None)
+            except OllamaError as e:
+                self.app.post(self._on_model_info, model, None, e)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_model_info(self, model, info, err):
+        if err:
+            self.info_label.configure(text=f"{model}: no se pudo leer la info ({err})")
+            return
+        self.model_infos[model] = info
+        if model == self.model_var.get():
+            self._show_model_info()
+
+    def _show_model_info(self):
+        info = self.model_infos.get(self.model_var.get())
+        if not info:
+            return
+        parts = [info.family, f"{info.parameter_size} parámetros", info.quantization]
+        if info.context_max:
+            parts.append(f"contexto máx. {info.context_max:,}".replace(",", "."))
+        parts.append("razona" if info.thinks else "no razona")
+        if "temperature" in info.defaults:
+            parts.append(f"temp. por defecto {info.defaults['temperature']}")
+        self.info_label.configure(text=" · ".join(parts))
+
+        # Un modelo sin capacidad de razonar da error 400 con think:true.
+        self._think_enabled = info.thinks
+        if not info.thinks:
+            self.think_var.set("auto")
+        if not self.gen:
+            self.think_cb.configure(state="readonly" if info.thinks else "disabled")
+        self.refresh_estimate()
+
+    def refresh_estimate(self):
+        """Estimación de VRAM del modelo elegido con el contexto actual."""
+        info = self.model_infos.get(self.model_var.get())
+        num_ctx = self._num_ctx()
+        if not info or not num_ctx:
+            self.vram_label.configure(text="")
+            return
+        est = info.estimate_bytes(num_ctx)
+        if est is None:
+            self.vram_label.configure(text="VRAM: no se pudo estimar para esta arquitectura",
+                                      style="Muted.TLabel")
+            return
+        kv = info.kv_cache_bytes(num_ctx)
+        base = (f"VRAM estimada con contexto {num_ctx}: pesos {fmt_bytes(info.file_size)} "
+                f"+ caché KV {fmt_bytes(kv)} + grafo ≈ {fmt_bytes(est)}")
+        total = self.app.vram_total
+        state, frac = info.fit(num_ctx, total)
+        if state is None:
+            self.vram_label.configure(text=base + " (sin datos de GPU)", style="Muted.TLabel")
+            return
+        best = self._max_fitting_ctx(info, total)
+        tail = f" · contexto máx. que entra ≈ {best}" if best else ""
+        if state == "entra":
+            text, style = f"{base} → entra 100 % en GPU{tail}", "Ok.TLabel"
+        elif state == "justo":
+            text, style = f"{base} → entra justo{tail}", "Warn.TLabel"
+        else:
+            text = (f"{base} → no entra: ~{frac:.0%} en GPU, el resto en CPU (más lento)."
+                    + (f" Bajá el contexto a ≤ {best}." if best else " No entra ni con contexto mínimo."))
+            style = "Bad.TLabel"
+        self.vram_label.configure(text=text, style=style)
+
+    @staticmethod
+    def _max_fitting_ctx(info, total):
+        """Mayor num_ctx (múltiplo de 512) que entra entero en la GPU."""
+        lo, hi = 0, (info.context_max or 131072) // 512
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if info.fit(mid * 512, total)[0] in ("entra", "justo"):
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo * 512 or None
 
     def unload_models(self):
         if self.gen:
@@ -245,11 +401,8 @@ class ChatPanel(ttk.Frame):
         except (OSError, ValueError) as e:
             messagebox.showerror("No se pudo cargar", f"{os.path.basename(path)}: {e}", parent=self)
             return
-        self.file_name, self.file_text = os.path.basename(path), text
+        self._set_file(os.path.basename(path), text)
         approx_tokens = len(text) // 4
-        self.file_label.configure(text=f"{self.file_name} (~{approx_tokens} tokens)",
-                                  style="TLabel")
-        self.remove_file_btn.configure(state="normal")
         self._note(f"Archivo cargado: {self.file_name}, {len(text)} caracteres, "
                    f"~{approx_tokens} tokens (estimado).")
         num_ctx = self._num_ctx() or C.DEFAULT_NUM_CTX
@@ -259,10 +412,17 @@ class ChatPanel(ttk.Frame):
                        "así que el modelo puede perder el prompt de sistema o parte del archivo. "
                        "Subí 'Contexto' (ojo: más contexto = más VRAM).", "warn")
 
+    def _set_file(self, name, text):
+        self.file_name, self.file_text = name, text
+        if text is None:
+            self.file_label.configure(text="sin archivo", style="Muted.TLabel")
+            self.remove_file_btn.configure(state="disabled")
+        else:
+            self.file_label.configure(text=f"{name} (~{len(text) // 4} tokens)", style="TLabel")
+            self.remove_file_btn.configure(state="normal")
+
     def remove_file(self):
-        self.file_name = self.file_text = None
-        self.file_label.configure(text="sin archivo", style="Muted.TLabel")
-        self.remove_file_btn.configure(state="disabled")
+        self._set_file(None, None)
         self._note("Archivo quitado del contexto.")
 
     def edit_system_prompt(self):
@@ -270,7 +430,7 @@ class ChatPanel(ttk.Frame):
         win.title("Prompt de sistema")
         win.configure(bg=C.BG)
         win.transient(self.winfo_toplevel())
-        txt = tk.Text(win, width=70, height=12, wrap="word", bg=C.FIELD, fg=C.FG,
+        txt = tk.Text(win, width=70, height=12, wrap="word", bg=C.FIELD, fg=C.FG, font="TkDefaultFont",
                       insertbackground=C.FG, relief="flat", padx=8, pady=6)
         txt.pack(fill="both", expand=True, padx=10, pady=(10, 6))
         txt.insert("1.0", self.system_prompt)
@@ -303,38 +463,73 @@ class ChatPanel(ttk.Frame):
             return None
         return n if n >= 128 else None
 
+    def current_settings(self):
+        return {"model": self.model_var.get(), "think": self.think_var.get(),
+                "num_ctx": self._num_ctx() or C.DEFAULT_NUM_CTX,
+                "temperature": self.temp_var.get().strip(), "seed": self.seed_var.get().strip()}
+
     # ---------------------------------------------------------- generación
+    def _read_options(self):
+        """Valida los controles. Devuelve (model, think, num_ctx, options) o None."""
+        model = self.model_var.get()
+        if not model:
+            self._note("Error: no hay modelo seleccionado (¿Ollama está corriendo?).", "error")
+            return None
+        num_ctx = self._num_ctx()
+        if num_ctx is None:
+            self._note("Error: 'Contexto' tiene que ser un número entero ≥ 128.", "error")
+            return None
+        options = {"num_ctx": num_ctx}
+        temp = self.temp_var.get().strip().replace(",", ".")
+        if temp:
+            try:
+                options["temperature"] = float(temp)
+                if not 0 <= options["temperature"] <= 2:
+                    raise ValueError
+            except ValueError:
+                self._note("Error: 'Temp.' tiene que ser un número entre 0 y 2 "
+                           "(o vacío para usar la del modelo).", "error")
+                return None
+        seed = self.seed_var.get().strip()
+        if seed:
+            try:
+                options["seed"] = int(seed)
+            except ValueError:
+                self._note("Error: 'Semilla' tiene que ser un número entero "
+                           "(o vacío para que sea aleatoria).", "error")
+                return None
+        return model, THINK_MODES[self.think_var.get()], num_ctx, options
+
     def send(self):
         if self.gen:
+            return
+        if self.app.benchmark_running:
+            self._note("Hay un benchmark corriendo; esperá a que termine.", "warn")
             return
         text = self.input.get("1.0", "end-1c").strip()
         if not text:
             return
-        model = self.model_var.get()
-        if not model:
-            self._note("Error: no hay modelo seleccionado (¿Ollama está corriendo?).", "error")
+        opts = self._read_options()
+        if opts is None:
             return
-        num_ctx = self._num_ctx()
-        if num_ctx is None:
-            self._note("Error: 'Contexto' tiene que ser un número entero ≥ 128.", "error")
-            return
-        think = THINK_MODES[self.think_var.get()]
-
         self.input.delete("1.0", "end")
+        self._start(text, *opts)
+
+    def _start(self, text, model, think, num_ctx, options):
         self.messages.append({"role": "user", "content": text})
-        self._append("Vos\n", "user_h")
-        self._append(text + "\n", "content")
+        self._render_user(text)
         self._append(f"{model}\n", "asst_h")
         self.chat.mark_set("resp_start", "end-1c")
         self.chat.mark_gravity("resp_start", "left")
 
-        payload = {"model": model, "stream": True, "options": {"num_ctx": num_ctx},
-                   "messages": [m for m in [self._system_message()] if m] + self.messages}
+        history = [{"role": m["role"], "content": m["content"]} for m in self.messages]
+        payload = {"model": model, "stream": True, "options": options,
+                   "messages": [m for m in [self._system_message()] if m] + history}
         if think is not None:
             payload["think"] = think
 
         gen = Generation(model, think, num_ctx)
-        gen.exclusive = self.exclusive_var.get()
+        gen.exclusive = self.app.exclusive_var.get()
         self.gen = gen
         self._set_busy(True)
         self._set_status("Esperando primer token (si el modelo no estaba cargado, tarda más)…")
@@ -346,7 +541,11 @@ class ChatPanel(ttk.Frame):
             gen.resp = resp
         try:
             if gen.exclusive:
-                self._free_vram(gen)
+                freed = free_vram(self.client, gen.model, gen.stop_event,
+                                  lambda msg: self.app.post(self._set_status, msg))
+                if freed:
+                    gen.freed = freed
+                    gen.t_start = time.monotonic()  # el primer token se mide sin la descarga
                 if gen.stop_event.is_set():
                     return
             for chunk in self.client.chat_stream(payload, gen.stop_event, on_open=on_open):
@@ -356,34 +555,6 @@ class ChatPanel(ttk.Frame):
             self.app.post(self._on_done, gen, e)
         except Exception as e:  # inesperado: mostrarlo, no esconderlo
             self.app.post(self._on_done, gen, OllamaError(f"{type(e).__name__}: {e}"))
-
-    def _free_vram(self, gen):
-        """(Hilo de trabajo) Descarga los otros modelos antes de cargar gen.model.
-
-        Con 4 GB de VRAM, un modelo chico ya cargado alcanza para que el 4b
-        quede repartido entre CPU y GPU. Si el modelo pedido ya está cargado
-        pero no entero en GPU, también se descarga para que se recargue al 100 %.
-        """
-        running = self.client.running()
-        targets = [m["name"] for m in running if m["name"] != gen.model]
-        if not targets:
-            return
-        mine = next((m for m in running if m["name"] == gen.model), None)
-        if mine and (mine.get("size_vram") or 0) < (mine.get("size") or 0):
-            targets.append(gen.model)
-        t0 = time.monotonic()
-        self.app.post(self._set_status, "Liberando VRAM: descargando " + ", ".join(targets) + "…")
-        for name in targets:
-            self.client.unload(name)
-        # La descarga es asíncrona en Ollama: esperar a que /api/ps lo confirme.
-        deadline = t0 + 10
-        while time.monotonic() < deadline and not gen.stop_event.is_set():
-            if not any(m["name"] in targets for m in self.client.running()):
-                break
-            time.sleep(0.25)
-        gen.freed = (targets, time.monotonic() - t0)
-        gen.t_start = time.monotonic()  # el primer token se mide sin contar la descarga
-        self.app.post(self._set_status, "VRAM liberada; esperando primer token…")
 
     def _on_chunk(self, gen, chunk):
         if gen is not self.gen:  # respuesta ya detenida
@@ -425,6 +596,10 @@ class ChatPanel(ttk.Frame):
         gen.last_kind = kind
         if not body:
             return
+        if kind == "content" and not gen.content_marked:
+            self.chat.mark_set("content_start", "end-1c")
+            self.chat.mark_gravity("content_start", "left")
+            gen.content_marked = True
         self._append(body, kind)
         if kind == "thinking":
             gen.thinking_text += body
@@ -438,6 +613,7 @@ class ChatPanel(ttk.Frame):
         self.chat.tag_add("thinking", "resp_start", "end-1c")
         gen.thinking_text += gen.content_text
         gen.content_text = ""
+        gen.content_marked = False
         gen.last_kind = "thinking"
         gen.pending_ws = ""
         self._set_status("El modelo razonó dentro de la respuesta; se separó como razonamiento.")
@@ -462,6 +638,12 @@ class ChatPanel(ttk.Frame):
     def _finish(self, gen, err=None, stopped=False):
         self.gen = None
         self._set_busy(False)
+        if not err and gen.content_marked and gen.content_text:
+            # Durante el streaming se ve el texto crudo; al final se le da formato.
+            self.chat.configure(state="normal")
+            self.chat.delete("content_start", "end-1c")
+            self.chat.configure(state="disabled")
+            self._append_markdown(gen.content_text)
         self._append("\n")
         if err:
             self._note(f"Error: {err}", "error")
@@ -471,14 +653,17 @@ class ChatPanel(ttk.Frame):
             self._set_status("Error en la generación")
             return
 
+        stats = self._stats(gen, stopped)
+        reply = {"role": "assistant", "content": gen.content_text, "model": gen.model,
+                 "thinking": gen.thinking_text, "stats": stats}
         if stopped:
             self._note("[detenido]", "meta")
             if gen.content_text:
-                self.messages.append({"role": "assistant", "content": gen.content_text})
+                self.messages.append(reply)
             else:
                 self.messages.pop()
         else:
-            self.messages.append({"role": "assistant", "content": gen.content_text})
+            self.messages.append(reply)
 
         if gen.think is False and (gen.thinking_in_field or gen.thinking_in_content):
             self._note("Aviso: pediste think:false pero el modelo razonó igual. La app lo "
@@ -490,14 +675,15 @@ class ChatPanel(ttk.Frame):
             self._note("Aviso: el modelo no produjo respuesta final (solo razonamiento). "
                        "Puede que se haya quedado sin contexto.", "warn")
 
-        stats = self._stats(gen, stopped)
-        rate = f"{stats['tok_s']:.1f} tok/s" if stats["tok_s"] else "n/d tok/s"
-        approx = " (aprox., cortada)" if stats["approx"] else ""
-        self._note(f"▸ {stats['eval_count']} tokens · {rate} · primer token "
-                   f"{fmt_seconds(stats['ttft'])} · total {fmt_seconds(stats['total_s'])}{approx}")
+        self._note(stats_line(stats))
         if gen.freed:
             names, secs = gen.freed
             self._note(f"▸ VRAM liberada antes de cargar: {', '.join(names)} ({fmt_seconds(secs)})")
+        if stats.get("prompt_count") and stats["prompt_count"] + stats["eval_count"] >= 0.9 * gen.num_ctx:
+            self._note(f"Aviso: la charla ya usa ~{stats['prompt_count'] + stats['eval_count']} de "
+                       f"{gen.num_ctx} tokens de contexto. Lo próximo puede recortar el principio "
+                       "(incluido el prompt de sistema). Subí 'Contexto' o empezá una charla nueva.",
+                       "warn")
         self.app.monitor.set_last_stats(stats)
         self._set_status("Listo")
 
@@ -536,12 +722,166 @@ class ChatPanel(ttk.Frame):
         window = min(2.0, max(now - gen.t_first, 0.5))
         return len(gen.recent) / window
 
-    def new_chat(self):
-        self.stop()
-        self.messages.clear()
+    # ------------------------------------------------------ renderizado
+    def _render_user(self, text):
+        self._append("Vos\n", "user_h")
+        self._append(text + "\n", "content")
+
+    def _render_assistant(self, msg):
+        self._append(f"{msg.get('model', 'asistente')}\n", "asst_h")
+        if msg.get("thinking"):
+            self._append(msg["thinking"] + "\n\n", "thinking")
+        self._append_markdown(msg["content"])
+        self._append("\n")
+        if msg.get("stats"):
+            self._note(stats_line(msg["stats"]))
+
+    def _render_all(self):
         self.chat.configure(state="normal")
         self.chat.delete("1.0", "end")
         self.chat.configure(state="disabled")
+        for m in self.messages:
+            if m["role"] == "user":
+                self._render_user(m["content"])
+            else:
+                self._render_assistant(m)
+
+    # ---------------------------------------------------- acciones de charla
+    def regenerate(self):
+        """Vuelve a pedir la última respuesta (útil con temperatura > 0 o sin semilla)."""
+        if self.gen or self.app.benchmark_running:
+            return
+        if self.messages and self.messages[-1]["role"] == "assistant":
+            self.messages.pop()
+        if not self.messages or self.messages[-1]["role"] != "user":
+            self._set_status("No hay una respuesta para regenerar")
+            return
+        opts = self._read_options()
+        if opts is None:
+            return
+        user = self.messages.pop()
+        self._render_all()
+        self._start(user["content"], *opts)
+
+    def copy_selection(self):
+        try:
+            text = self.chat.get("sel.first", "sel.last")
+        except tk.TclError:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    def copy_last_response(self):
+        for m in reversed(self.messages):
+            if m["role"] == "assistant":
+                self.clipboard_clear()
+                self.clipboard_append(m["content"])
+                self._set_status("Última respuesta copiada al portapapeles")
+                return
+        self._set_status("Todavía no hay respuestas para copiar")
+
+    def new_chat(self):
+        self.stop()
+        self.messages.clear()
+        self._render_all()
         self._note("Nueva charla." + (f" Archivo en contexto: {self.file_name}."
                                       if self.file_name else ""))
         self._set_status("")
+
+    def _conversation_data(self):
+        return conversation.to_json(self.messages, self.current_settings(), self.system_prompt,
+                                    self.file_name, self.file_text)
+
+    def save_chat(self):
+        if not self.messages:
+            self._set_status("La charla está vacía: no hay nada para guardar")
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Guardar charla", defaultextension=".json",
+            filetypes=CHAT_FILETYPES, initialfile=time.strftime("charla-%Y%m%d-%H%M.json"))
+        if not path:
+            return
+        try:
+            conversation.save(path, self._conversation_data())
+            self._set_status(f"Charla guardada en {path}")
+        except OSError as e:
+            messagebox.showerror("No se pudo guardar", str(e), parent=self)
+
+    def export_markdown(self):
+        if not self.messages:
+            self._set_status("La charla está vacía: no hay nada para exportar")
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Exportar a Markdown", defaultextension=".md",
+            filetypes=[("Markdown", "*.md"), ("Todos", "*")],
+            initialfile=time.strftime("charla-%Y%m%d-%H%M.md"))
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(conversation.to_markdown(self._conversation_data()))
+            self._set_status(f"Exportada a {path}")
+        except OSError as e:
+            messagebox.showerror("No se pudo exportar", str(e), parent=self)
+
+    def open_chat(self):
+        if self.gen:
+            return
+        path = filedialog.askopenfilename(parent=self, title="Abrir charla",
+                                          filetypes=CHAT_FILETYPES)
+        if not path:
+            return
+        try:
+            data = conversation.load(path)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("No se pudo abrir", f"{os.path.basename(path)}: {e}", parent=self)
+            return
+        self.messages = data["messages"]
+        self.system_prompt = data.get("system_prompt") or self.system_prompt
+        f = data.get("file")
+        if f:
+            self._set_file(f["name"], f["text"])
+        else:
+            self._set_file(None, None)
+        s = data.get("settings") or {}
+        if s.get("model") in self.model_names:
+            self.model_var.set(s["model"])
+            self._on_model_changed()
+        if s.get("think") in THINK_MODES and self._think_enabled:
+            self.think_var.set(s["think"])
+        for var, key in ((self.ctx_var, "num_ctx"), (self.temp_var, "temperature"),
+                         (self.seed_var, "seed")):
+            if key in s:
+                var.set(str(s[key]))
+        self._render_all()
+        missing = s.get("model") and s["model"] not in self.model_names
+        self._note(f"Charla abierta: {os.path.basename(path)} ({len(self.messages)} mensajes)."
+                   + (f" Ojo: el modelo {s['model']} ya no está instalado." if missing else ""))
+
+
+def free_vram(client, model, stop_event, report):
+    """(Hilo de trabajo) Descarga los otros modelos antes de cargar `model`.
+
+    Con 4 GB de VRAM, un modelo chico ya cargado alcanza para que el 4b quede
+    repartido entre CPU y GPU. Si `model` ya está cargado pero no entero en
+    GPU, también se descarga para que se recargue al 100 %.
+    Devuelve (modelos descargados, segundos) o None si no hizo falta.
+    """
+    running = client.running()
+    targets = [m["name"] for m in running if m["name"] != model]
+    if not targets:
+        return None
+    mine = next((m for m in running if m["name"] == model), None)
+    if mine and (mine.get("size_vram") or 0) < (mine.get("size") or 0):
+        targets.append(model)
+    t0 = time.monotonic()
+    report("Liberando VRAM: descargando " + ", ".join(targets) + "…")
+    for name in targets:
+        client.unload(name)
+    # La descarga es asíncrona en Ollama: esperar a que /api/ps lo confirme.
+    while time.monotonic() < t0 + 10 and not stop_event.is_set():
+        if not any(m["name"] in targets for m in client.running()):
+            break
+        time.sleep(0.25)
+    report("VRAM liberada; cargando modelo…")
+    return targets, time.monotonic() - t0

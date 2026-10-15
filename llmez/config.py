@@ -24,6 +24,19 @@ HISTORY_POINTS = 60  # último minuto a 1 muestra/s
 # alcanzan para qwen3:4b + otro modelo; terminaría repartido con la CPU).
 EXCLUSIVE_VRAM = True
 
+# VRAM que Ollama no llega a usar para el modelo (contexto CUDA, reservas).
+# Calibrado en una GTX 960M de 4 GB: qwen3:4b entra al 100 % ocupando
+# 2,97 GB y con 3,23 GB ya queda al 96 % → el techo práctico ronda 3,1 GB.
+VRAM_RESERVE_BYTES = 1_150_000_000
+
+# Benchmark
+BENCH_PROMPT = "Explicá en tres oraciones qué es una GPU y por qué sirve para IA."
+BENCH_MAX_TOKENS = 128
+
+# Sugerencias para "Bajar modelo…" (chicos, pensados para 4 GB de VRAM).
+SUGGESTED_MODELS = ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "gemma3:1b", "gemma3:4b",
+                    "llama3.2:1b", "llama3.2:3b", "deepseek-r1:1.5b", "smollm2:360m")
+
 DEFAULT_SYSTEM_PROMPT = (
     "Sos un asistente útil y claro. Respondé SIEMPRE en español, aunque la "
     "pregunta o el material adjunto estén en otro idioma. Si razonás antes de "
