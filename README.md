@@ -10,7 +10,7 @@ Es un proyecto personal de aprendizaje, pensado para entender qué pasa adentro 
 
 **Chat**
 - Selector de modelo (lee `/api/tags`, con botón para refrescar).
-- Respuestas en streaming vía `/api/chat`, con **formato markdown en vivo** mientras se generan (negrita, listas, títulos, bloques de código, tablas).
+- Respuestas en streaming vía `/api/chat`, con **formato markdown en vivo** mientras se generan (negrita y cursiva anidables, listas, títulos, enlaces, tachado, bloques de código y tablas alineadas).
 - Razonamiento (`message.thinking`) separado de la respuesta, en gris y cursiva.
 - Opción *Pensar*: `auto` (no manda el parámetro), `sí` (`think: true`) o `no` (`think: false`). Se bloquea sola en los modelos que no razonan (según `capabilities` de `/api/show`), así no aparece el error 400.
 - Contexto (`num_ctx`, 2048 por defecto), **temperatura** y **semilla** configurables.

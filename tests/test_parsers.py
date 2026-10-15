@@ -76,9 +76,47 @@ class MarkdownTest(unittest.TestCase):
     def test_unterminated_code_block(self):
         self.assertEqual(plain(markdown.parse("```\ncortado")), "cortado")
 
-    def test_table_is_monospaced(self):
-        runs = markdown.parse("| a | b |\n|---|---|")
-        self.assertTrue(all("md_table" in tags for t, tags in runs if t.strip()))
+    def test_link_shows_text_and_url(self):
+        runs = markdown.parse("Ver [la doc](https://ollama.com/docs).")
+        self.assertEqual(plain(runs), "Ver la doc (https://ollama.com/docs).")
+        self.assertIn("md_link", tags_of(runs, "la doc"))
+
+    def test_python_dunder_is_not_bold(self):
+        runs = markdown.parse("usá __init__ y __main__ pero __esto sí__")
+        self.assertEqual(plain(runs), "usá __init__ y __main__ pero esto sí")
+        self.assertIn("md_bold", tags_of(runs, "esto sí"))
+
+    def test_escaped_asterisks_are_literal(self):
+        self.assertEqual(markdown.parse(r"\*no es cursiva\*"), [("*", ()), ("no es cursiva", ()), ("*", ())])
+
+    def test_italic_nested_in_bold(self):
+        runs = markdown.parse("**negrita con *cursiva* adentro**")
+        self.assertEqual(plain(runs), "negrita con cursiva adentro")
+        self.assertEqual(tags_of(runs, "cursiva"), ("md_bold_italic",))
+        self.assertEqual(tags_of(runs, "negrita con "), ("md_bold",))
+
+    def test_bold_nested_in_italic(self):
+        runs = markdown.parse("*cursiva con **negrita** adentro*")
+        self.assertEqual(plain(runs), "cursiva con negrita adentro")
+        self.assertEqual(tags_of(runs, "negrita"), ("md_bold_italic",))
+
+    def test_strikethrough(self):
+        self.assertIn("md_strike", tags_of(markdown.parse("~~viejo~~ nuevo"), "viejo"))
+
+    def test_indented_code_block_is_dedented(self):
+        self.assertEqual(markdown.parse("  ```python\n  x = 1\n    y = 2\n  ```"),
+                         [("x = 1\n  y = 2", ("md_codeblock",))])
+
+    def test_table_is_aligned_with_bold_header(self):
+        runs = markdown.parse("Antes\n| Método | Uso |\n|---|:--:|\n| `__init__` | constructor |\n| x | y |\nDespués")
+        expected = ("Antes\n" + "Método    Uso\n"
+                    + "─" * 21 + "\n"  # 8 + 2 de separación + 11
+                    + "__init__  constructor\n" + "x         y\n" + "Después")
+        self.assertEqual(plain(runs), expected)
+        self.assertIn("md_table_head", tags_of(runs, "Método    Uso\n"))
+
+    def test_table_without_header_and_ragged_rows(self):
+        self.assertEqual(plain(markdown.parse("| a | b | c |\n| dd |")), "a   b  c\ndd")
 
 
 if __name__ == "__main__":
