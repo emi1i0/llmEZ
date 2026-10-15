@@ -42,6 +42,7 @@ class App:
         self.vram_total = None  # bytes, del último dato de nvidia-smi
         self.exclusive_var = tk.BooleanVar(value=self.settings["exclusive_vram"])
         self.unload_on_exit_var = tk.BooleanVar(value=self.settings["unload_on_exit"])
+        self.loop_guard_var = tk.BooleanVar(value=self.settings["loop_guard"])
         theme.apply(root)
         root.geometry(self.settings["geometry"])
 
@@ -108,6 +109,8 @@ class App:
                           variable=self.exclusive_var)
         m.add_checkbutton(label="Descargar modelos de VRAM al cerrar la app",
                           variable=self.unload_on_exit_var)
+        m.add_checkbutton(label="Cortar la respuesta si el modelo entra en bucle",
+                          variable=self.loop_guard_var)
         bar.add_cascade(label="Opciones", menu=m)
 
         m = self._menu(bar)
@@ -194,6 +197,7 @@ class App:
         data.update(self.chat.current_settings())
         data.update(exclusive_vram=self.exclusive_var.get(),
                     unload_on_exit=self.unload_on_exit_var.get(),
+                    loop_guard=self.loop_guard_var.get(),
                     system_prompt=self.chat.system_prompt,
                     geometry=self.root.geometry())
         err = S.save(data)

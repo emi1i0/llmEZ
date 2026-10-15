@@ -17,6 +17,7 @@ Es un proyecto personal de aprendizaje, pensado para entender qué pasa adentro 
 - **Info del modelo y estimación de VRAM**: familia, parámetros, cuantización, contexto máximo, y cuánto va a ocupar con el contexto elegido — si entra entero en la GPU, qué porcentaje quedaría en CPU si no, y el mayor contexto que entra. Se actualiza al cambiar el contexto, antes de cargar nada.
 - Cargar un archivo de texto que se inyecta en el prompt de sistema, con aviso si probablemente no entra en el contexto.
 - Aviso cuando la charla se acerca al límite de contexto (Ollama recortaría el principio, incluido el prompt de sistema).
+- **Corte automático de bucles**: si el modelo empieza a repetir lo mismo sin parar (en la respuesta o en el razonamiento), la app corta la generación, quita la parte repetida del historial y explica la causa probable. Se puede desactivar en *Opciones*.
 - **Regenerar** la última respuesta, **copiar**, y menú con clic derecho.
 - **Guardar / abrir charlas** (JSON con razonamiento y estadísticas) y **exportar a Markdown**.
 - Prompt de sistema editable; el de por defecto pide responder en español.
@@ -81,7 +82,7 @@ Si todavía no tenés modelos, bajalos desde *Modelos → Bajar / borrar modelos
 .venv/bin/python -m unittest discover -s tests -t .
 ```
 
-Cubren el separador de `<think>`, el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
+Cubren el separador de `<think>`, el detector de bucles (con salidas reales de smollm2 y qwen3), el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
 
 ## Ejecutable con PyInstaller
 
@@ -107,6 +108,7 @@ llmez/
 ├── metrics.py              hilo que muestrea psutil, nvidia-smi y /api/ps cada 1 s
 ├── model_info.py           datos de /api/show y estimación de memoria (pesos + caché KV)
 ├── think_parser.py         separa <think>…</think> que llega mezclado en content
+├── repetition.py           detecta cuando el modelo entra en bucle
 ├── markdown.py             markdown mínimo → estilos de tk.Text
 ├── conversation.py         guardar / abrir / exportar charlas
 ├── settings.py             preferencias en ~/.config/llmez
@@ -146,6 +148,7 @@ Medido en una Dell Inspiron 7559 (i7 de 4 núcleos / 8 hilos, GTX 960M de 4 GB, 
 - **Dos modelos cargados se pisan.** Con qwen3:0.6b cargado, qwen3:4b quedó al 76 % en GPU. Y si el modelo ya estaba cargado a medias, Ollama lo reusa así: hay que descargarlo para que vuelva a entrar entero. Por eso existe *Solo un modelo en VRAM*.
 - **qwen3:4b ignora `think: false`.** El razonamiento llega dentro de `content`, sin etiqueta de apertura y cerrado con un `</think>` suelto. La app lo detecta en pleno streaming, recolorea como razonamiento lo que ya había mostrado, avisa y guarda solo la respuesta en el historial.
 - **Semilla fija no garantiza la misma respuesta.** Con temperatura 0 y semilla 42, la primera respuesta (prompt sin caché) puede diferir de las siguientes (prompt en caché), que entre sí sí son idénticas. Al reusar la caché, llama.cpp procesa el prompt en lotes de distinto tamaño y eso cambia mínimamente los cálculos en la GPU; a veces alcanza para elegir otra palabra.
+- **La temperatura 0 provoca bucles.** Al elegir siempre la palabra más probable, los modelos chicos se encierran repitiendo un párrafo o una frase: pasó en 3 de 5 pedidos con temperatura 0, contra 1 de 15 con la temperatura por defecto del modelo. Las penalizaciones de Ollama no ayudaron de forma medible (`presence_penalty` 1.5 y `frequency_penalty` 0.5: 1 de 15, igual que sin nada) y `repeat_penalty` 1.15 empeoró (3 de 15): castiga también los dígitos y palabras que una respuesta legítimamente repite, como en una lista de números primos. Por eso la app no las agrega: detecta el bucle y lo corta.
 - **Los modelos chicos razonan en inglés.** Aun con el prompt de sistema pidiendo español, los qwen3 suelen pensar en inglés; la respuesta final sí sale en español.
 - **No siempre aciertan.** Preguntado por qué un modelo de 4B entra en 4 GB, qwen3:1.7b dio una explicación vaga. La razón concreta es la cuantización: Q4_K_M usa unos 4,5 bits por parámetro, así que 4.000 millones de parámetros ocupan ~2,5 GB en vez de 8 GB en FP16.
 - **El servidor de Ollama casi no consume.** `ollama serve` usa ~36 MB de RAM en reposo. Lo que ocupa VRAM es el proceso `llama-server` de cada modelo cargado, que desaparece al descargarlo. No hace falta apagar el servicio.

@@ -11,6 +11,7 @@ from . import config as C
 from . import conversation, markdown
 from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
+from .repetition import RepetitionDetector
 from .think_parser import ThinkTagSplitter
 
 THINK_MODES = {"auto": None, "sí": True, "no": False}
@@ -55,6 +56,9 @@ class Generation:
         self.final = None
         self.exclusive = False
         self.freed = None  # (modelos descargados, segundos) si se liberó VRAM
+        self.loop_guard = None  # {'thinking': detector, 'content': detector} si está activo
+        self.loop = None  # (tipo de texto, descripción) si se cortó por bucle
+        self.temperature = None  # la pedida; None = la del modelo
 
 
 class ChatPanel(ttk.Frame):
@@ -530,6 +534,9 @@ class ChatPanel(ttk.Frame):
 
         gen = Generation(model, think, num_ctx)
         gen.exclusive = self.app.exclusive_var.get()
+        gen.temperature = options.get("temperature")
+        if self.app.loop_guard_var.get():
+            gen.loop_guard = {"thinking": RepetitionDetector(), "content": RepetitionDetector()}
         self.gen = gen
         self._set_busy(True)
         self._set_status("Esperando primer token (si el modelo no estaba cargado, tarda más)…")
@@ -587,6 +594,8 @@ class ChatPanel(ttk.Frame):
     def _emit(self, gen, kind, text):
         # Los espacios del final se retienen: si después cambia el tipo de
         # texto (razonamiento → respuesta) se descartan y no quedan huecos.
+        if gen is not self.gen:  # se cortó (p. ej. por bucle) a mitad del chunk
+            return
         if gen.last_kind and gen.last_kind != kind:
             gen.pending_ws = ""
             self._append("\n\n")
@@ -605,6 +614,16 @@ class ChatPanel(ttk.Frame):
             gen.thinking_text += body
         else:
             gen.content_text += body
+        if gen.loop_guard and gen.loop_guard[kind].feed(body) and gen is self.gen:
+            self._stop_loop(gen, kind)
+
+    def _stop_loop(self, gen, kind):
+        """El modelo entró en bucle: cortar y quedarse sin la parte repetida."""
+        det = gen.loop_guard[kind]
+        gen.loop = (kind, det.reason)
+        if kind == "content":
+            gen.content_text = det.trimmed()
+        self.stop()
 
     def _retag_as_thinking(self, gen):
         """Llegó un </think> sin apertura: todo lo mostrado como respuesta era razonamiento."""
@@ -614,6 +633,9 @@ class ChatPanel(ttk.Frame):
         gen.thinking_text += gen.content_text
         gen.content_text = ""
         gen.content_marked = False
+        if gen.loop_guard:  # lo que venía como respuesta pasa a contar como razonamiento
+            gen.loop_guard["thinking"].feed(gen.loop_guard["content"].text)
+            gen.loop_guard["content"] = RepetitionDetector()
         gen.last_kind = "thinking"
         gen.pending_ws = ""
         self._set_status("El modelo razonó dentro de la respuesta; se separó como razonamiento.")
@@ -624,7 +646,8 @@ class ChatPanel(ttk.Frame):
         for kind, text in gen.splitter.flush():
             if kind != "orphan_close":
                 self._emit(gen, kind, text)
-        self._finish(gen, err=err)
+        if gen is self.gen:  # el último pedazo pudo disparar el corte por bucle
+            self._finish(gen, err=err)
 
     def stop(self):
         gen = self.gen
@@ -656,12 +679,22 @@ class ChatPanel(ttk.Frame):
         stats = self._stats(gen, stopped)
         reply = {"role": "assistant", "content": gen.content_text, "model": gen.model,
                  "thinking": gen.thinking_text, "stats": stats}
-        if stopped:
-            self._note("[detenido]", "meta")
-            if gen.content_text:
-                self.messages.append(reply)
+        if gen.loop:
+            kind, reason = gen.loop
+            where = "el razonamiento" if kind == "thinking" else "la respuesta"
+            self._note(f"[detenido: {where} entró en bucle — {reason}]"
+                       + (" Se quitó la parte repetida." if kind == "content" else ""), "warn")
+            if gen.temperature == 0:
+                self._note("La temperatura 0 es la causa más común: siempre elige la palabra más "
+                           "probable y se encierra. Dejá 'Temp.' vacío (la del modelo) o usá 0.6–0.8.",
+                           "meta")
             else:
-                self.messages.pop()
+                self._note("Probá regenerar (Ctrl+R) o un modelo más grande: los muy chicos "
+                           "se repiten más.", "meta")
+        elif stopped:
+            self._note("[detenido]", "meta")
+        if stopped and not gen.content_text:
+            self.messages.pop()  # cortada antes de responder: no queda la pregunta colgada
         else:
             self.messages.append(reply)
 

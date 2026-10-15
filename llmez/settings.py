@@ -12,6 +12,7 @@ DEFAULTS = {
     "seed": "",  # vacío = aleatoria
     "exclusive_vram": C.EXCLUSIVE_VRAM,
     "unload_on_exit": False,
+    "loop_guard": True,
     "system_prompt": C.DEFAULT_SYSTEM_PROMPT,
     "geometry": "1400x880",
 }
