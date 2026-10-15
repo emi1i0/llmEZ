@@ -149,3 +149,7 @@ Medido en una Dell Inspiron 7559 (i7 de 4 núcleos / 8 hilos, GTX 960M de 4 GB, 
 - **Los modelos chicos razonan en inglés.** Aun con el prompt de sistema pidiendo español, los qwen3 suelen pensar en inglés; la respuesta final sí sale en español.
 - **No siempre aciertan.** Preguntado por qué un modelo de 4B entra en 4 GB, qwen3:1.7b dio una explicación vaga. La razón concreta es la cuantización: Q4_K_M usa unos 4,5 bits por parámetro, así que 4.000 millones de parámetros ocupan ~2,5 GB en vez de 8 GB en FP16.
 - **El servidor de Ollama casi no consume.** `ollama serve` usa ~36 MB de RAM en reposo. Lo que ocupa VRAM es el proceso `llama-server` de cada modelo cargado, que desaparece al descargarlo. No hace falta apagar el servicio.
+
+## Licencia
+
+[MIT](LICENSE): podés usar, modificar y redistribuir el código libremente, manteniendo el aviso de copyright.
