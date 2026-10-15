@@ -144,13 +144,14 @@ def _rescale(values):
     return [(v - lo) / (hi - lo) for v in values] if hi > lo else [0.0] * len(values)
 
 
-def combine(bm25, dense, weight=0.7):
+def combine(bm25, dense, weight=0.8):
     """Mezcla BM25 y embeddings, cada uno llevado a 0..1 (escalas muy distintas).
 
-    Medido con la Ordenanza 1877 (12 preguntas, fragmentos de 800 caracteres): con el
-    70 % para embeddings la respuesta llegó al modelo en 12/12 con 600 a 4000 tokens
-    de presupuesto; con 50/50, 11/12 hasta 1000 tokens (la pregunta con sinónimos:
-    embeddings la ponen 1.ª y BM25 59.ª); RRF k=60, 9/12; BM25 solo, 9/12."""
+    Peso ajustado con tests/eval (3 documentos, 37 preguntas × 4 presupuestos = 148 casos,
+    qwen3-embedding:0.6b): la respuesta llega al modelo en 127/148 con 0,8, 126 con 0,7,
+    113 con 0,5 y 100 con BM25 solo. Documento por documento, 0,8 no empeora a 0,7 en
+    ninguno y mejora la Constitución (MRR 0,678 contra 0,589). Validando con un documento
+    afuera, ajustar más fino no generaliza: 0,7–0,8 es una meseta."""
     if not dense or len(dense) != len(bm25):
         return bm25
     if max(bm25) == 0:
