@@ -16,7 +16,7 @@ Es un proyecto personal de aprendizaje, pensado para entender qué pasa adentro 
 - Contexto (`num_ctx`, 2048 por defecto), **temperatura** y **semilla** configurables.
 - **Info del modelo y estimación de VRAM**: familia, parámetros, cuantización, contexto máximo, y cuánto va a ocupar con el contexto elegido — si entra entero en la GPU, qué porcentaje quedaría en CPU si no, y el mayor contexto que entra. Se actualiza al cambiar el contexto, antes de cargar nada.
 - Cargar un **archivo de texto o PDF** que se inyecta en el prompt de sistema, con aviso si probablemente no entra en el contexto. Los PDF se convierten con `pdftotext` y cada página queda marcada (`--- página 3 ---`) para que el modelo pueda decir dónde está cada dato; si el PDF es escaneado (imágenes sin texto) la app lo avisa, porque haría falta OCR. Los encabezados y pies que se repiten en cada página se quitan.
-- **Documentos que no entran en el contexto**: en vez de mandarlos enteros (Ollama los recortaría en silencio), la app busca en cada pregunta las páginas más relevantes con BM25 —un buscador por palabras clave, sin dependencias— y manda solo las que entran, diciendo cuáles fueron. La pregunta anterior también cuenta, así funcionan las de seguimiento ("¿y en cuántos años?").
+- **Documentos que no entran en el contexto**: en vez de mandarlos enteros (Ollama los recortaría en silencio), la app busca en cada pregunta las páginas más relevantes y manda solo las que entran, diciendo cuáles fueron. La búsqueda combina BM25 (palabras clave, sin dependencias) con **embeddings** (significado) si está instalado `qwen3-embedding:0.6b`: así encuentra la página aunque la pregunta use otras palabras. El documento se indexa una sola vez en segundo plano —en la GPU si está libre, si no en la CPU— y el índice se guarda en `~/.cache/llmez`; las preguntas se convierten en la CPU para no desplazar al modelo de chat. La pregunta anterior también cuenta, así funcionan las de seguimiento ("¿y en cuántos años?").
 - Cada respuesta tiene un tope de tokens igual a lo que queda libre en el contexto: si se llena, se corta con un aviso en vez de seguir generando sin sentido.
 - Aviso cuando la charla se acerca al límite de contexto (Ollama recortaría el principio, incluido el prompt de sistema).
 - **Corte automático de bucles**: si el modelo empieza a repetir lo mismo sin parar (en la respuesta o en el razonamiento), la app corta la generación, quita la parte repetida del historial y explica la causa probable. Se puede desactivar en *Opciones*.
@@ -85,7 +85,25 @@ Si todavía no tenés modelos, bajalos desde *Modelos → Bajar / borrar modelos
 .venv/bin/python -m unittest discover -s tests -t .
 ```
 
-Cubren la lectura de PDF (con PDFs generados en el test), el separador de `<think>`, el detector de bucles (con salidas reales de smollm2 y qwen3), el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
+Son rápidos y no necesitan Ollama. Cubren la búsqueda por significado (con un cliente falso de Ollama), la lectura de PDF (con PDFs generados en el test), el separador de `<think>`, el detector de bucles (con salidas reales de smollm2 y qwen3), el parser de markdown, la estimación de memoria (contra valores medidos), la configuración, el formato de las charlas y el cliente HTTP contra un servidor falso de Ollama (streaming, errores y que *Detener* corte la conexión).
+
+### Pruebas de interfaz
+
+```bash
+tests/gui/run_all.sh                 # todas (~40 min)
+tests/gui/run_all.sh test_scripted   # una sola
+```
+
+Abren la app real y la manejan contra el Ollama real (necesitan sesión gráfica, los modelos qwen3 y smollm2, y usan la GPU). Cada una trabaja con carpetas de configuración, registro y caché temporales, así no toca las del usuario.
+
+| Prueba | Qué cubre |
+|---|---|
+| `test_scripted` | Respuestas guionadas: emojis, razonamiento intercalado, bucles, error a mitad, respuesta enorme, validaciones, charlas viejas, detener mientras carga |
+| `test_ollama` | Estimador de VRAM contra lo real, markdown, regenerar, guardar/abrir/exportar, varios turnos, think, archivos, atajos, Ollama caído, benchmark, bajar/borrar modelos, estrés, ventana mínima |
+| `test_documents` | PDF, PDF escaneado, dato escondido en un archivo largo, la Ordenanza 1877 (si está en `~/Descargas`; otra ruta con `LLMEZ_TEST_PDF`) con búsqueda por significado y caché |
+| `test_long` | Charla de 200 turnos, memoria estable, sin `nvidia-smi`, archivo de 1,7 MB |
+
+Una prueba que no llega a imprimir su resumen cuenta como falla: así un error al arrancar no pasa desapercibido.
 
 ## Ejecutable con PyInstaller
 
@@ -113,6 +131,7 @@ llmez/
 ├── think_parser.py         separa <think>…</think> que llega mezclado en content
 ├── repetition.py           detecta cuando el modelo entra en bucle
 ├── retrieval.py            búsqueda de páginas relevantes (BM25) para documentos largos
+├── semantic.py             búsqueda por significado (embeddings) que se combina con BM25
 ├── markdown.py             markdown mínimo → estilos de tk.Text
 ├── conversation.py         guardar / abrir / exportar charlas
 ├── documents.py            leer texto plano y PDF (con pdftotext)
@@ -158,6 +177,7 @@ Medido en una Dell Inspiron 7559 (i7 de 4 núcleos / 8 hilos, GTX 960M de 4 GB, 
 - **Ollama recorta en silencio lo que no entra.** Si el prompt supera el contexto, se queda con los primeros 4 tokens y el final (hasta la mitad de `num_ctx`) y descarta todo lo demás, sin error: en su log aparece `truncating input prompt limit=1026 prompt=55702`. Con un archivo grande y la respuesta escondida al principio, qwen3:0.6b contestó que el dato "no está en el archivo": nunca lo vio. También se pierde el prompt de sistema. La app avisa cuando detecta que Ollama procesó muchos menos tokens de los que se mandaron.
 - **Pasarse del contexto también provoca bucles.** Ollama no corta la respuesta al llegar a `num_ctx`: sigue generando y va descartando el principio de la charla. Con contexto 512, qwen3:0.6b escribió 1.500 tokens y terminó repitiendo `**Final Answer** \boxed{C}`. Cuando el corte por bucle ocurre después de superar el contexto, la app lo dice.
 - **Con documentos largos, lo que importa es qué parte llega al modelo, no el prompt.** Con un PDF de 75 páginas (~26.000 tokens) y contexto 8192, qwen3:1.7b acertó 0 de 4 preguntas mandando el documento entero —con dos prompts de sistema distintos, que dieron respuestas idénticas porque Ollama recortó hasta el prompt— y 4 de 4 mandando las páginas que elige la búsqueda. qwen3:4b, con contexto 2048 y solo 2 a 4 páginas por pregunta, también 4 de 4, citando la página. Los encabezados repetidos confundían: el nombre de quien sella cada hoja pasaba por el firmante.
+- **Embeddings: el idioma importa y la VRAM también.** Con la Ordenanza 1877, `nomic-embed-text` (entrenado en inglés) ubicó peor las páginas que BM25. `qwen3-embedding:0.6b` (multilingüe) resolvió el caso de sinónimos ("¿cuánto tiempo lleva recibirse?": la página correcta pasó del puesto 22 al 1), y combinado con BM25 ninguna pregunta quedó peor que el puesto 5 (BM25 solo: 22; embeddings solos: 28). Indexar las 75 páginas tarda 60 s en GPU y 271 s en CPU, pero si hay otro modelo en la VRAM Ollama reserva igual 1,4 GB de trabajo, se queda sin memoria y el proceso se cae (`CUDA error: out of memory`): por eso la app indexa en GPU solo si está libre y la pasa a CPU cuando el chat necesita la GPU.
 - **Los tokens no son "caracteres ÷ 4".** En prosa en castellano qwen3 usa ~3,9 caracteres por token, pero en páginas con tablas y números ~2,8. La app arranca con una estimación prudente y la ajusta con el conteo real que devuelve Ollama.
 - **Los modelos chicos razonan en inglés.** Aun con el prompt de sistema pidiendo español, los qwen3 suelen pensar en inglés; la respuesta final sí sale en español.
 - **No siempre aciertan.** Preguntado por qué un modelo de 4B entra en 4 GB, qwen3:1.7b dio una explicación vaga. La razón concreta es la cuantización: Q4_K_M usa unos 4,5 bits por parámetro, así que 4.000 millones de parámetros ocupan ~2,5 GB en vez de 8 GB en FP16.

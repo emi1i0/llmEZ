@@ -46,6 +46,7 @@ class App:
         self.exclusive_var = tk.BooleanVar(value=self.settings["exclusive_vram"])
         self.unload_on_exit_var = tk.BooleanVar(value=self.settings["unload_on_exit"])
         self.loop_guard_var = tk.BooleanVar(value=self.settings["loop_guard"])
+        self.semantic_var = tk.BooleanVar(value=self.settings["semantic_search"])
         theme.apply(root)
         # Solo el tamaño: una posición guardada puede caer en un monitor que ya no está.
         root.geometry(self.settings["geometry"].split("+")[0].split("-")[0])
@@ -115,6 +116,8 @@ class App:
                           variable=self.unload_on_exit_var)
         m.add_checkbutton(label="Cortar la respuesta si el modelo entra en bucle",
                           variable=self.loop_guard_var)
+        m.add_checkbutton(label="Buscar en archivos también por significado (embeddings)",
+                          variable=self.semantic_var)
         bar.add_cascade(label="Opciones", menu=m)
 
         m = self._menu(bar)
@@ -204,6 +207,7 @@ class App:
         data.update(exclusive_vram=self.exclusive_var.get(),
                     unload_on_exit=self.unload_on_exit_var.get(),
                     loop_guard=self.loop_guard_var.get(),
+                    semantic_search=self.semantic_var.get(),
                     system_prompt=self.chat.system_prompt,
                     geometry=self.root.geometry())
         err = S.save(data)

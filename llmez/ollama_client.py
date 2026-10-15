@@ -57,6 +57,15 @@ class OllamaClient:
         """Saca el modelo de memoria (RAM/VRAM) inmediatamente."""
         self._json("/api/generate", {"model": model, "keep_alive": 0}, timeout=30)
 
+    def embed(self, model, inputs, options=None, keep_alive=None, timeout=600):
+        """Vectores de /api/embed para una lista de textos."""
+        body = {"model": model, "input": list(inputs)}
+        if options:
+            body["options"] = options
+        if keep_alive is not None:
+            body["keep_alive"] = keep_alive
+        return self._json("/api/embed", body, timeout=timeout)["embeddings"]
+
     def delete(self, model):
         """Borra el modelo del disco."""
         self._json("/api/delete", {"model": model}, timeout=30, method="DELETE")

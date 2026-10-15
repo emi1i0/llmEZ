@@ -3,7 +3,8 @@
 Si el documento completo no entra, Ollama se queda en silencio con el final y
 descarta el resto (incluido el prompt de sistema). En ese caso se mandan solo
 las páginas (o fragmentos) más relevantes para la pregunta, elegidas con BM25:
-un buscador por palabras clave clásico, sin dependencias ni embeddings.
+un buscador por palabras clave clásico. Si hay embeddings (semantic.py), las dos
+puntuaciones se combinan: cada una tapa los huecos de la otra.
 """
 import math
 import re
@@ -95,13 +96,15 @@ class Index:
             out.append(s)
         return out
 
-    def select(self, query, budget_tokens, min_ratio=0.25, chars_per_token=CHARS_PER_TOKEN):
+    def select(self, query, budget_tokens, min_ratio=0.25, chars_per_token=CHARS_PER_TOKEN,
+               dense=None):
         """Los fragmentos más relevantes que entran en budget_tokens, en orden del documento.
 
         Solo entran los que tienen al menos min_ratio del puntaje del mejor: llenar el
         presupuesto con páginas poco relevantes confunde a los modelos chicos.
+        `dense`: similitudes por embeddings (una por fragmento) para combinar con BM25.
         Devuelve (texto, etiquetas elegidas)."""
-        scores = self.scores(query)
+        scores = combine(self.scores(query), dense)
         best = max(scores, default=0)
         if best == 0:
             order = list(range(len(self.chunks)))  # nada coincide: el principio del documento
@@ -117,6 +120,23 @@ class Index:
             used += cost
         chosen.sort()
         return "\n\n".join(self.chunks[i][1] for i in chosen), [self.chunks[i][0] for i in chosen]
+
+
+def _rescale(values):
+    lo, hi = min(values), max(values)
+    return [(v - lo) / (hi - lo) for v in values] if hi > lo else [0.0] * len(values)
+
+
+def combine(bm25, dense, weight=0.5):
+    """Mezcla BM25 y embeddings, cada uno llevado a 0..1 (escalas muy distintas).
+
+    Medido con la Ordenanza 1877 (9 preguntas): con BM25 la página correcta quedó
+    en el peor caso en el puesto 22, con embeddings en el 28, combinados en el 5."""
+    if not dense or len(dense) != len(bm25):
+        return bm25
+    if max(bm25) == 0:
+        return _rescale(dense)
+    return [(1 - weight) * b + weight * d for b, d in zip(_rescale(bm25), _rescale(dense))]
 
 
 def compact_labels(labels):

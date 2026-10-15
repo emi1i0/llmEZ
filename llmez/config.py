@@ -35,7 +35,8 @@ BENCH_MAX_TOKENS = 128
 
 # Sugerencias para "Bajar modelo…" (chicos, pensados para 4 GB de VRAM).
 SUGGESTED_MODELS = ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "gemma3:1b", "gemma3:4b",
-                    "llama3.2:1b", "llama3.2:3b", "deepseek-r1:1.5b", "smollm2:360m")
+                    "llama3.2:1b", "llama3.2:3b", "deepseek-r1:1.5b", "smollm2:360m",
+                    "qwen3-embedding:0.6b")
 
 DEFAULT_SYSTEM_PROMPT = (
     "Sos un asistente útil y claro. Respondé siempre en español, aunque la "
@@ -54,6 +55,7 @@ FILE_EXCERPT_NOTE = (" Del archivo (que es largo) se incluyen solo {parts} de {t
                      "elegidas por relevancia para la pregunta; si el dato no aparece, puede "
                      "estar en otra parte del archivo.")
 FILE_CONTEXT_SHARE = 0.6  # parte del contexto que puede ocupar el archivo
+SEMANTIC_MIN_TOKENS = 1500  # archivos más chicos entran enteros: no hace falta indexarlos
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 

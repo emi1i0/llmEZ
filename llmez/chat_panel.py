@@ -15,6 +15,7 @@ from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
 from .repetition import RepetitionDetector
 from .retrieval import CHARS_PER_TOKEN, Index, compact_labels, estimate_tokens
+from .semantic import EMBED_MODEL, SemanticIndex, is_embedding_only
 from .think_parser import ThinkTagSplitter
 
 THINK_MODES = {"auto": None, "sí": True, "no": False}
@@ -85,6 +86,9 @@ class ChatPanel(ttk.Frame):
         self._preferred_model = settings["model"]
         self._think_enabled = True
         self._index = None
+        self._sem = None  # SemanticIndex del archivo actual (búsqueda por significado)
+        self._sem_stop = None
+        self._search_kind = ""
         self._chars_per_token = None  # medido en la última respuesta (ver _finish)
         self._build(settings)
         self._note("Elegí un modelo y escribí tu mensaje. Enter envía, Shift+Enter "
@@ -93,7 +97,8 @@ class ChatPanel(ttk.Frame):
 
     @property
     def model_names(self):
-        return list(self.model_sizes)
+        """Modelos para chatear: los de embeddings no generan texto."""
+        return [n for n in self.model_sizes if not is_embedding_only(n)]
 
     # ------------------------------------------------------------------ UI
     def _build(self, s):
@@ -436,10 +441,66 @@ class ChatPanel(ttk.Frame):
                        "contexto) y descarta el resto: el modelo pierde el prompt de sistema y el "
                        "principio del archivo. "
                        "Subí 'Contexto' (ojo: más contexto = más VRAM).", "warn")
+        if estimate_tokens(text) > C.SEMANTIC_MIN_TOKENS:
+            self._start_semantic()
+
+    def _start_semantic(self):
+        """Indexa el archivo por significado en segundo plano (ver semantic.py)."""
+        if not self.app.semantic_var.get():
+            return
+        if EMBED_MODEL not in self.model_sizes:
+            self._note(f"Sugerencia: para que la búsqueda en el archivo entienda sinónimos, bajá "
+                       f"{EMBED_MODEL} (Modelos → Bajar / borrar modelos…). Mientras tanto se busca "
+                       "por palabras clave.", "meta")
+            return
+        if self._index is None:
+            self._index = Index(self.file_text)
+        sem = SemanticIndex(self.client, [t for _, t in self._index.chunks])
+        self._sem, self._sem_stop = sem, threading.Event()
+        if sem.load_cached():
+            self._note(f"▸ Búsqueda por significado lista (índice guardado de {len(sem.texts)} "
+                       f"{self._index.chunks[0][0].split()[0]}s).")
+            threading.Thread(target=sem.warm_up, daemon=True).start()
+            return
+        stop, t0 = self._sem_stop, time.monotonic()
+        total = len(sem.texts)
+
+        def progress(done, n, device):
+            self.app.post(self._sem_progress, sem, f"Indexando el archivo por significado: {done}/{n} ({device})…")
+
+        def work():
+            try:
+                if sem.build(stop, progress):
+                    sem.warm_up()
+                    self.app.post(self._sem_done, sem, None, time.monotonic() - t0)
+            except Exception as e:  # sin embeddings se sigue con BM25
+                self.app.post(self._sem_done, sem, e, 0)
+        self._set_status(f"Indexando el archivo por significado: 0/{total}…")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sem_progress(self, sem, text):
+        if sem is self._sem and not self.gen:
+            self._set_status(text)
+
+    def _sem_done(self, sem, err, secs):
+        if sem is not self._sem:
+            return
+        if err:
+            self._sem = None
+            self._note(f"Aviso: no se pudo indexar por significado ({err}); se busca solo por "
+                       "palabras clave.", "warn")
+        else:
+            self._note(f"▸ Búsqueda por significado lista: {len(sem.texts)} fragmentos en "
+                       f"{secs:.0f} s ({sem.device}). Queda guardada para la próxima vez.")
+        if not self.gen:
+            self._set_status("Listo")
 
     def _set_file(self, name, text):
         self.file_name, self.file_text = name, text
         self._index = None  # se arma al primer uso si el archivo no entra en el contexto
+        if self._sem_stop:
+            self._sem_stop.set()  # deja de indexar el archivo anterior
+        self._sem = self._sem_stop = None
         if text is None:
             self.file_label.configure(text="sin archivo", style="Muted.TLabel")
             self.remove_file_btn.configure(state="disabled")
@@ -490,7 +551,12 @@ class ChatPanel(ttk.Frame):
             if estimate_tokens(body, cpt) > budget:
                 if self._index is None:
                     self._index = Index(self.file_text)
-                body, parts = self._index.select(query, max(budget, 300), chars_per_token=cpt)
+                dense = None
+                if self._sem is not None and self._sem.ready and self.app.semantic_var.get():
+                    dense = self._sem.scores(query)
+                self._search_kind = "palabras clave y significado" if dense else "palabras clave"
+                body, parts = self._index.select(query, max(budget, 300), chars_per_token=cpt,
+                                                 dense=dense)
                 total = f"{len(self._index.chunks)} {self._index.chunks[0][0].split()[0]}s"
                 note = C.FILE_EXCERPT_NOTE.format(parts=compact_labels(parts) if parts else "nada",
                                                   total=total)
@@ -571,7 +637,7 @@ class ChatPanel(ttk.Frame):
         if parts is not None:
             self._note(f"▸ El archivo no entra entero en el contexto: van las "
                        f"{compact_labels(parts) if parts else '(ninguna)'} ({len(parts)} de "
-                       f"{len(self._index.chunks)}), elegidas por relevancia para la pregunta.")
+                       f"{len(self._index.chunks)}), elegidas por {self._search_kind}.")
         messages = [m for m in [system] if m] + history
         # Si la respuesta llena el contexto, Ollama no corta: sigue descartando el principio
         # y el modelo delira. Se le pide parar donde se llena (done_reason "length").
@@ -601,6 +667,12 @@ class ChatPanel(ttk.Frame):
         def on_open(resp):
             gen.resp = resp
         try:
+            sem = self._sem
+            if sem is not None and not sem.ready and sem.device == "GPU":
+                # Indexando en GPU: dos modelos en 4 GB hacen caer a Ollama (CUDA out of
+                # memory). La indexación sigue en CPU y el chat espera a que se libere.
+                self.app.post(self._set_status, "Pasando la indexación a CPU para liberar la GPU…")
+                sem.release_gpu()
             if gen.exclusive:
                 freed = free_vram(self.client, gen.model, gen.stop_event,
                                   lambda msg: self.app.post(self._set_status, msg))
@@ -1012,6 +1084,8 @@ class ChatPanel(ttk.Frame):
         f = data.get("file")
         if f:
             self._set_file(f["name"], f["text"])
+            if estimate_tokens(f["text"]) > C.SEMANTIC_MIN_TOKENS:
+                self._start_semantic()
         else:
             self._set_file(None, None)
         s = data.get("settings") or {}
@@ -1039,7 +1113,8 @@ def free_vram(client, model, stop_event, report):
     Devuelve (modelos descargados, segundos) o None si no hizo falta.
     """
     running = client.running()
-    targets = [m["name"] for m in running if m["name"] != model]
+    # Los que corren en CPU (p. ej. el de embeddings para las preguntas) no ocupan VRAM.
+    targets = [m["name"] for m in running if m["name"] != model and (m.get("size_vram") or 0) > 0]
     if not targets:
         return None
     mine = next((m for m in running if m["name"] == model), None)
