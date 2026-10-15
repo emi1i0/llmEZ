@@ -728,7 +728,12 @@ class ChatPanel(ttk.Frame):
             where = "el razonamiento" if kind == "thinking" else "la respuesta"
             self._note(f"[detenido: {where} entró en bucle — {reason}]"
                        + (" Se quitó la parte repetida." if kind == "content" else ""), "warn")
-            if gen.temperature == 0:
+            if gen.n_chunks >= gen.num_ctx * 0.8:
+                self._note(f"La respuesta ya iba por ~{gen.n_chunks} tokens con un contexto de "
+                           f"{gen.num_ctx}: al pasarse, Ollama descarta el principio de la charla y el "
+                           "modelo pierde el hilo. Subí 'Contexto' o pedí una respuesta más corta.",
+                           "meta")
+            elif gen.temperature == 0:
                 self._note("La temperatura 0 es la causa más común: siempre elige la palabra más "
                            "probable y se encierra. Dejá 'Temp.' vacío (la del modelo) o usá 0.6–0.8.",
                            "meta")
