@@ -117,32 +117,32 @@ class ChatPanel(ttk.Frame):
         self.ctx_var = tk.StringVar(value=str(s["num_ctx"]))
         self.ctx_spin = ttk.Spinbox(row1, textvariable=self.ctx_var, width=7,
                                     values=C.NUM_CTX_CHOICES)
-        self.ctx_spin.pack(side="left", padx=(4, 10))
+        self.ctx_spin.pack(side="left", padx=(4, 0))
         self.ctx_var.trace_add("write", lambda *a: self.refresh_estimate())
 
-        ttk.Label(row1, text="Temp.").pack(side="left")
+        # Tres filas cortas en vez de dos largas: entran en la ventana mínima.
+        row2 = ttk.Frame(self)
+        row2.pack(fill="x", pady=(6, 0))
+        ttk.Label(row2, text="Temp.").pack(side="left")
         self.temp_var = tk.StringVar(value=s["temperature"])
-        self.temp_spin = ttk.Spinbox(row1, textvariable=self.temp_var, width=5,
+        self.temp_spin = ttk.Spinbox(row2, textvariable=self.temp_var, width=5,
                                      from_=0.0, to=2.0, increment=0.1, format="%.1f")
         self.temp_spin.pack(side="left", padx=(4, 10))
-
-        ttk.Label(row1, text="Semilla").pack(side="left")
+        ttk.Label(row2, text="Semilla").pack(side="left")
         self.seed_var = tk.StringVar(value=s["seed"])
-        self.seed_entry = ttk.Entry(row1, textvariable=self.seed_var, width=7)
+        self.seed_entry = ttk.Entry(row2, textvariable=self.seed_var, width=7)
         self.seed_entry.pack(side="left", padx=(4, 0))
+        ttk.Button(row2, text="Prompt de sistema…",
+                   command=self.edit_system_prompt).pack(side="right")
 
-        row2 = ttk.Frame(self)
-        row2.pack(fill="x", pady=(6, 2))
-        ttk.Button(row2, text="Cargar archivo…", command=self.load_file).pack(side="left")
-        self.remove_file_btn = ttk.Button(row2, text="Quitar", command=self.remove_file,
+        row3 = ttk.Frame(self)
+        row3.pack(fill="x", pady=(6, 2))
+        ttk.Button(row3, text="Cargar archivo…", command=self.load_file).pack(side="left")
+        self.remove_file_btn = ttk.Button(row3, text="Quitar", command=self.remove_file,
                                           state="disabled")
         self.remove_file_btn.pack(side="left", padx=(4, 6))
-        self.file_label = ttk.Label(row2, text="sin archivo", style="Muted.TLabel")
+        self.file_label = ttk.Label(row3, text="sin archivo", style="Muted.TLabel")
         self.file_label.pack(side="left")
-        ttk.Button(row2, text="Descargar modelos de VRAM",
-                   command=self.unload_models).pack(side="right")
-        ttk.Button(row2, text="Prompt de sistema…",
-                   command=self.edit_system_prompt).pack(side="right", padx=6)
 
         # Info del modelo y estimación de VRAM
         self.info_label = ttk.Label(self, text="", style="Muted.TLabel", anchor="w")
@@ -186,28 +186,31 @@ class ChatPanel(ttk.Frame):
         self.chat.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
 
         # Entrada y botones
+        # La entrada y el estado se anclan abajo *antes* que el área de la charla:
+        # si falta alto, se achica la charla y no desaparecen los botones.
+        self.status = ttk.Label(self, text="", style="Muted.TLabel", anchor="w")
+        self.status.pack(side="bottom", fill="x", pady=(4, 0), before=box)
         bottom = ttk.Frame(self)
-        bottom.pack(fill="x", pady=(6, 0))
+        bottom.pack(side="bottom", fill="x", pady=(6, 0), before=box)
         self.input = tk.Text(bottom, height=3, wrap="word", bg=C.FIELD, fg=C.FG,
                              font=text_font, insertbackground=C.FG, relief="flat",
                              padx=8, pady=6, highlightthickness=1,
                              highlightbackground=C.BORDER, highlightcolor=C.ACCENT)
-        self.input.pack(side="left", fill="x", expand=True)
         self.input.bind("<Return>", self._on_enter)
         self.input.bind("<Escape>", lambda e: self.stop())
         self.chat.bind("<Escape>", lambda e: self.stop())
 
         btns = ttk.Frame(bottom)
-        btns.pack(side="left", padx=(6, 0), fill="y")
+        btns.pack(side="right", padx=(6, 0), fill="y")  # antes que la entrada, que se expande
+        self.input.pack(side="left", fill="both", expand=True)
         self.send_btn = ttk.Button(btns, text="Enviar", style="Accent.TButton",
                                    command=self.send)
         self.send_btn.pack(fill="x")
         self.stop_btn = ttk.Button(btns, text="Detener", command=self.stop, state="disabled")
         self.stop_btn.pack(fill="x", pady=2)
         ttk.Button(btns, text="Nueva charla", command=self.new_chat).pack(fill="x")
-
-        self.status = ttk.Label(self, text="", style="Muted.TLabel", anchor="w")
-        self.status.pack(fill="x", pady=(4, 0))
+        ttk.Button(btns, text="Descargar de VRAM", command=self.unload_models).pack(
+            fill="x", pady=(2, 0))
         self.input.focus_set()
 
     def _append(self, text, *tags):

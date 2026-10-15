@@ -25,6 +25,25 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(loaded["num_ctx"], 4096)
         self.assertNotIn("basura", loaded)
 
+    def test_wrong_types_fall_back_to_defaults(self):
+        os.makedirs(os.path.dirname(self.path))
+        bad = {"geometry": "basura", "exclusive_vram": "sí", "unload_on_exit": None,
+               "num_ctx": "abc", "seed": [1, 2], "system_prompt": None, "loop_guard": 1,
+               "temperature": 5, "model": 42}
+        with open(self.path, "w") as f:
+            json.dump(bad, f)
+        self.assertEqual(settings.load(self.path), settings.DEFAULTS)
+
+    def test_valid_values_are_kept(self):
+        good = {"geometry": "1200x700+10+-5", "num_ctx": 4096, "loop_guard": False, "seed": "7"}
+        self.assertIsNone(settings.save(dict(settings.DEFAULTS, **good), self.path))
+        loaded = settings.load(self.path)
+        self.assertEqual({k: loaded[k] for k in good}, good)
+
+    def test_absurd_context_is_rejected(self):
+        self.assertIsNone(settings.save(dict(settings.DEFAULTS, num_ctx=12), self.path))
+        self.assertEqual(settings.load(self.path)["num_ctx"], settings.DEFAULTS["num_ctx"])
+
     def test_corrupt_file_does_not_break(self):
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, "w") as f:

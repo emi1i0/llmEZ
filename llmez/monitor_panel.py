@@ -8,6 +8,7 @@ import psutil
 from . import config as C
 from .chat_panel import fmt_seconds
 from .widgets.line_chart import LineChart
+from .widgets.scroll_frame import ScrollFrame
 
 GIB = 1024 ** 3
 PSTATES = {"P0": "máximo rendimiento", "P2": "alto", "P5": "medio", "P8": "reposo",
@@ -23,14 +24,16 @@ def _expires_in(iso):
         return None
 
 
-class MonitorPanel(ttk.Frame):
+class MonitorPanel(ScrollFrame):
+    """Los widgets van en self.body: con la ventana chica aparece una barra de desplazamiento."""
+
     def __init__(self, master):
         super().__init__(master, padding=(4, 8, 8, 8))
 
         self._section("CPU")
-        self.cpu_chart = LineChart(self, "Total", [("total", C.CPU_COLOR)], height=64)
+        self.cpu_chart = LineChart(self.body, "Total", [("total", C.CPU_COLOR)], height=64)
         self.cpu_chart.pack(fill="x")
-        cores = ttk.Frame(self)
+        cores = ttk.Frame(self.body)
         cores.pack(fill="x", pady=(2, 0))
         cols = 4
         self.core_charts = []
@@ -41,19 +44,19 @@ class MonitorPanel(ttk.Frame):
             self.core_charts.append(ch)
 
         self._section("RAM")
-        self.ram_chart = LineChart(self, "Usada", [("ram", C.RAM_COLOR)], height=56)
+        self.ram_chart = LineChart(self.body, "Usada", [("ram", C.RAM_COLOR)], height=56)
         self.ram_chart.pack(fill="x")
 
         self._section("GPU (nvidia-smi)")
-        self.gpu_chart = LineChart(self, "", [("uso", C.GPU_COLOR), ("VRAM", C.VRAM_COLOR)],
+        self.gpu_chart = LineChart(self.body, "", [("uso", C.GPU_COLOR), ("VRAM", C.VRAM_COLOR)],
                                    height=64)
         self.gpu_chart.pack(fill="x")
-        self.gpu_info = ttk.Label(self, text="esperando datos…", style="Muted.TLabel")
+        self.gpu_info = ttk.Label(self.body, text="esperando datos…", style="Muted.TLabel")
         self.gpu_info.pack(fill="x", pady=(2, 0))
 
         self._section("Ollama: modelos cargados")
         cols = ("modelo", "tamaño", "reparto", "ctx", "expira")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=3,
+        self.tree = ttk.Treeview(self.body, columns=cols, show="headings", height=3,
                                  selectmode="none")
         widths = {"modelo": 120, "tamaño": 64, "reparto": 110, "ctx": 56, "expira": 56}
         for c in cols:
@@ -66,10 +69,10 @@ class MonitorPanel(ttk.Frame):
         self.tree.pack(fill="x")
 
         self._section("Generación")
-        self.tok_chart = LineChart(self, "tok/s en vivo (aprox.)", [("tok/s", C.TOKS_COLOR)],
+        self.tok_chart = LineChart(self.body, "tok/s en vivo (aprox.)", [("tok/s", C.TOKS_COLOR)],
                                    y_max=None, fmt="{:.1f}", height=56)
         self.tok_chart.pack(fill="x")
-        grid = ttk.Frame(self)
+        grid = ttk.Frame(self.body)
         grid.pack(fill="x", pady=(4, 0))
         self.stat_labels = {}
         keys = ["Modelo", "Tokens generados", "Velocidad", "Primer token",
@@ -84,7 +87,7 @@ class MonitorPanel(ttk.Frame):
             self.stat_labels[key] = val
 
     def _section(self, title):
-        ttk.Label(self, text=title, style="Section.TLabel").pack(fill="x", pady=(8, 2))
+        ttk.Label(self.body, text=title, style="Section.TLabel").pack(fill="x", pady=(8, 2))
 
     # ---------------------------------------------------------------
     def update_sample(self, s):

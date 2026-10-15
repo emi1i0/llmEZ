@@ -47,7 +47,8 @@ class App:
         self.unload_on_exit_var = tk.BooleanVar(value=self.settings["unload_on_exit"])
         self.loop_guard_var = tk.BooleanVar(value=self.settings["loop_guard"])
         theme.apply(root)
-        root.geometry(self.settings["geometry"])
+        # Solo el tamaño: una posición guardada puede caer en un monitor que ya no está.
+        root.geometry(self.settings["geometry"].split("+")[0].split("-")[0])
 
         paned = ttk.PanedWindow(root, orient="horizontal")
         paned.pack(fill="both", expand=True)
