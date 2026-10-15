@@ -557,7 +557,7 @@ class ChatPanel(ttk.Frame):
                 self._search_kind = "palabras clave y significado" if dense else "palabras clave"
                 body, parts = self._index.select(query, max(budget, 300), chars_per_token=cpt,
                                                  dense=dense)
-                total = f"{len(self._index.chunks)} {self._index.chunks[0][0].split()[0]}s"
+                total = f"{self._index.units} {self._index.chunks[0][0].split()[0]}s"
                 note = C.FILE_EXCERPT_NOTE.format(parts=compact_labels(parts) if parts else "nada",
                                                   total=total)
             text += C.FILE_PROMPT_TEMPLATE.format(name=self.file_name, text=body, note=note)
@@ -636,8 +636,8 @@ class ChatPanel(ttk.Frame):
         system, parts = self._system_message(" ".join(prev_q + [text]), num_ctx)
         if parts is not None:
             self._note(f"▸ El archivo no entra entero en el contexto: van las "
-                       f"{compact_labels(parts) if parts else '(ninguna)'} ({len(parts)} de "
-                       f"{len(self._index.chunks)}), elegidas por {self._search_kind}.")
+                       f"{compact_labels(parts) if parts else '(ninguna)'} ({len(set(parts))} de "
+                       f"{self._index.units}), elegidas por {self._search_kind}.")
         messages = [m for m in [system] if m] + history
         # Si la respuesta llena el contexto, Ollama no corta: sigue descartando el principio
         # y el modelo delira. Se le pide parar donde se llena (done_reason "length").

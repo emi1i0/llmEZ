@@ -38,18 +38,11 @@ def _terms(text):
     return out
 
 
-def split_chunks(text, max_chars=2400):
-    """[(etiqueta, texto)]: por página si hay marcas de página; si no, por párrafos."""
-    marks = list(PAGE_MARK.finditer(text))
-    if marks:
-        chunks = []
-        for i, m in enumerate(marks):
-            end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-            chunks.append((f"página {m.group(1)}", text[m.start():end].strip()))
-        return chunks
-    # Unidades: párrafos; los muy largos (texto sin líneas en blanco) se parten por
-    # líneas y, si una línea sola es enorme, por caracteres. Si no, un archivo sin
-    # párrafos quedaba como un único fragmento que no entraba en ningún presupuesto.
+def _pack(text, max_chars):
+    """Parte un texto en trozos de hasta max_chars sin cortar párrafos ni líneas si se puede.
+
+    Unidades: párrafos; los muy largos (texto sin líneas en blanco) se parten por líneas
+    y, si una línea sola es enorme, por caracteres."""
     units = []
     for para in re.split(r"\n\s*\n", text):
         if len(para) <= max_chars:
@@ -57,20 +50,41 @@ def split_chunks(text, max_chars=2400):
             continue
         for line in para.split("\n"):
             units += [line[i:i + max_chars] for i in range(0, max(len(line), 1), max_chars)]
-    chunks, buf = [], ""
+    pieces, buf = [], ""
     for unit in units:
         if buf and len(buf) + len(unit) > max_chars:
-            chunks.append(buf)
+            pieces.append(buf)
             buf = ""
         buf = f"{buf}\n{unit}" if buf else unit
-    if buf:
-        chunks.append(buf)
-    return [(f"fragmento {i}", c.strip()) for i, c in enumerate(chunks, 1)]
+    if buf.strip():
+        pieces.append(buf)
+    return [p.strip() for p in pieces if p.strip()]
+
+
+def split_chunks(text, max_chars=800):
+    """[(etiqueta, texto)]: fragmentos de hasta ~max_chars (800: entran aun con el presupuesto
+    mínimo de la app, 300 tokens ≈ 840 caracteres).
+
+    Con marcas de página, cada página se parte en fragmentos que conservan la marca
+    ("--- página 19 ---") y la etiqueta "página 19". Fragmentos chicos importan con
+    poco contexto: con páginas enteras, una página relevante pero larga no entraba
+    y se mandaba otra más chica y menos relevante (pasó con qwen3:4b y contexto 2048)."""
+    marks = list(PAGE_MARK.finditer(text))
+    if marks:
+        chunks = []
+        for i, m in enumerate(marks):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+            body = text[m.end():end].strip()
+            for piece in _pack(body, max_chars) or [""]:
+                chunks.append((f"página {m.group(1)}", f"{m.group(0)}\n{piece}".strip()))
+        return chunks
+    return [(f"fragmento {i}", c) for i, c in enumerate(_pack(text, max_chars), 1)]
 
 
 class Index:
     def __init__(self, text, k1=1.5, b=0.75):
         self.chunks = split_chunks(text)
+        self.units = len({label for label, _ in self.chunks})  # páginas (o fragmentos) distintos
         self.k1, self.b = k1, b
         self.docs = [_terms(t) for _, t in self.chunks]
         self.avg = sum(map(len, self.docs)) / max(len(self.docs), 1)
@@ -118,6 +132,9 @@ class Index:
                 continue
             chosen.append(i)
             used += cost
+        if not chosen and order:  # ni el mejor entra entero: va recortado, nunca nada
+            i = order[0]
+            return self.chunks[i][1][:int(budget_tokens * chars_per_token)], [self.chunks[i][0]]
         chosen.sort()
         return "\n\n".join(self.chunks[i][1] for i in chosen), [self.chunks[i][0] for i in chosen]
 
@@ -127,11 +144,13 @@ def _rescale(values):
     return [(v - lo) / (hi - lo) for v in values] if hi > lo else [0.0] * len(values)
 
 
-def combine(bm25, dense, weight=0.5):
+def combine(bm25, dense, weight=0.7):
     """Mezcla BM25 y embeddings, cada uno llevado a 0..1 (escalas muy distintas).
 
-    Medido con la Ordenanza 1877 (9 preguntas): con BM25 la página correcta quedó
-    en el peor caso en el puesto 22, con embeddings en el 28, combinados en el 5."""
+    Medido con la Ordenanza 1877 (12 preguntas, fragmentos de 800 caracteres): con el
+    70 % para embeddings la respuesta llegó al modelo en 12/12 con 600 a 4000 tokens
+    de presupuesto; con 50/50, 11/12 hasta 1000 tokens (la pregunta con sinónimos:
+    embeddings la ponen 1.ª y BM25 59.ª); RRF k=60, 9/12; BM25 solo, 9/12."""
     if not dense or len(dense) != len(bm25):
         return bm25
     if max(bm25) == 0:
@@ -144,7 +163,7 @@ def compact_labels(labels):
     if not labels:
         return ""
     kind = labels[0].split()[0]
-    nums = sorted(int(l.split()[1]) for l in labels)
+    nums = sorted({int(l.split()[1]) for l in labels})  # una página puede venir en varios fragmentos
     ranges = []
     start = prev = nums[0]
     for n in nums[1:] + [None]:

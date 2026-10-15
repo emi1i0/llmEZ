@@ -45,6 +45,11 @@ class RetrievalTest(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertTrue(chunks[0][0].startswith("fragmento"))
 
+    def test_never_sends_nothing_when_budget_is_tiny(self):
+        text, labels = Index("--- página 1 ---\n" + "palabra " * 500).select("palabra", budget_tokens=50)
+        self.assertEqual(labels, ["página 1"])
+        self.assertTrue(0 < len(text) <= 50 * 2.8)
+
     def test_text_without_blank_lines_is_still_split(self):
         text = "Contraseña del wifi: pepino42.\n" + "".join(f"Línea {i}: dato irrelevante.\n" for i in range(3000))
         idx = Index(text)
@@ -61,6 +66,23 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(compact_labels(["página 7"]), "página 7")
         self.assertEqual(compact_labels(["fragmento 1", "fragmento 3"]), "fragmentos 1, 3")
         self.assertEqual(compact_labels([]), "")
+        self.assertEqual(compact_labels(["página 19", "página 19", "página 20"]), "páginas 19–20")
+
+    def test_long_pages_are_split_keeping_the_page_mark(self):
+        long_page = "\n\n".join(f"Párrafo {i}: " + "texto " * 60 for i in range(8))
+        idx = Index(f"--- página 1 ---\nCorta.\n\n--- página 19 ---\n{long_page}")
+        pieces = [t for label, t in idx.chunks if label == "página 19"]
+        self.assertGreater(len(pieces), 1)
+        self.assertTrue(all(t.startswith("--- página 19 ---") and len(t) < 1000 for t in pieces))
+        self.assertEqual(idx.units, 2)
+
+    def test_relevant_paragraph_of_a_long_page_fits_a_small_budget(self):
+        filler = "\n\n".join("Relleno administrativo sin relación con la pregunta. " * 4 for _ in range(10))
+        page19 = filler + "\n\nDuración de la carrera en años: 5 (cinco)\n\n" + filler
+        doc = "--- página 1 ---\nÍndice.\n\n--- página 19 ---\n" + page19
+        text, labels = Index(doc).select("duración de la carrera en años", budget_tokens=400)
+        self.assertIn("5 (cinco)", text)
+        self.assertEqual(labels[0], "página 19")
 
 
 class HeaderStripTest(unittest.TestCase):
