@@ -15,6 +15,7 @@ from .repetition import RepetitionDetector
 from .think_parser import ThinkTagSplitter
 
 THINK_MODES = {"auto": None, "sí": True, "no": False}
+RENDER_MIN_MS = 80  # intervalo mínimo entre redibujos con formato
 CHAT_FILETYPES = [("Charla llmEZ", "*.json"), ("Todos", "*")]
 
 
@@ -47,7 +48,10 @@ class Generation:
         self.recent = collections.deque()  # tiempos de chunks para tok/s en vivo
         self.thinking_text = ""
         self.content_text = ""
-        self.content_marked = False  # se fijó la marca "content_start"
+        self.content_marked = False  # hay una zona de respuesta (content_start..content_end)
+        self.content_offset = 0  # desde dónde de content_text se dibuja esa zona
+        self.render_pending = False  # hay un redibujo con formato programado
+        self.render_ms = RENDER_MIN_MS
         self.splitter = ThinkTagSplitter()
         self.last_kind = None
         self.pending_ws = ""
@@ -597,6 +601,11 @@ class ChatPanel(ttk.Frame):
         if gen is not self.gen:  # se cortó (p. ej. por bucle) a mitad del chunk
             return
         if gen.last_kind and gen.last_kind != kind:
+            if gen.last_kind == "content" and gen.content_marked:
+                # Vuelve a razonar después de responder (raro): cerrar esa zona.
+                self._render_content(gen)
+                gen.content_marked = False
+                gen.content_offset = len(gen.content_text)
             gen.pending_ws = ""
             self._append("\n\n")
         text = gen.pending_ws + text
@@ -605,17 +614,48 @@ class ChatPanel(ttk.Frame):
         gen.last_kind = kind
         if not body:
             return
-        if kind == "content" and not gen.content_marked:
-            self.chat.mark_set("content_start", "end-1c")
-            self.chat.mark_gravity("content_start", "left")
-            gen.content_marked = True
-        self._append(body, kind)
         if kind == "thinking":
+            self._append(body, kind)
             gen.thinking_text += body
         else:
+            if not gen.content_marked:
+                self.chat.mark_set("content_start", "end-1c")
+                self.chat.mark_gravity("content_start", "left")
+                self.chat.mark_set("content_end", "end-1c")
+                self.chat.mark_gravity("content_end", "right")
+                gen.content_marked = True
             gen.content_text += body
+            self._schedule_render(gen)
         if gen.loop_guard and gen.loop_guard[kind].feed(body) and gen is self.gen:
             self._stop_loop(gen, kind)
+
+    def _schedule_render(self, gen):
+        if gen.render_pending:
+            return
+        gen.render_pending = True
+
+        def run():
+            if gen is self.gen and gen.render_pending:
+                self._render_content(gen)
+        self.after(gen.render_ms, run)
+
+    def _render_content(self, gen):
+        """Redibuja con formato markdown la respuesta en curso (zona content_start..end)."""
+        gen.render_pending = False
+        if not gen.content_marked:
+            return
+        t0 = time.perf_counter()
+        at_bottom = self.chat.yview()[1] >= 0.999
+        self.chat.configure(state="normal")
+        self.chat.delete("content_start", "content_end")
+        for txt, tags in markdown.parse(gen.content_text[gen.content_offset:]):
+            self.chat.insert("content_end", txt, ("content",) + tags)
+        self.chat.configure(state="disabled")
+        if at_bottom:
+            self.chat.see("end")
+        # Respuestas muy largas: espaciar los redibujos para no trabar la UI.
+        cost_ms = (time.perf_counter() - t0) * 1000
+        gen.render_ms = max(RENDER_MIN_MS, int(cost_ms * 5))
 
     def _stop_loop(self, gen, kind):
         """El modelo entró en bucle: cortar y quedarse sin la parte repetida."""
@@ -628,11 +668,18 @@ class ChatPanel(ttk.Frame):
     def _retag_as_thinking(self, gen):
         """Llegó un </think> sin apertura: todo lo mostrado como respuesta era razonamiento."""
         gen.thinking_in_content = True
+        if gen.content_marked:
+            self.chat.configure(state="normal")
+            self.chat.delete("content_start", "content_end")
+            self.chat.insert("content_end", gen.content_text[gen.content_offset:], ("thinking",))
+            self.chat.configure(state="disabled")
         self.chat.tag_remove("content", "resp_start", "end")
         self.chat.tag_add("thinking", "resp_start", "end-1c")
         gen.thinking_text += gen.content_text
         gen.content_text = ""
         gen.content_marked = False
+        gen.content_offset = 0
+        gen.render_pending = False
         if gen.loop_guard:  # lo que venía como respuesta pasa a contar como razonamiento
             gen.loop_guard["thinking"].feed(gen.loop_guard["content"].text)
             gen.loop_guard["content"] = RepetitionDetector()
@@ -661,12 +708,9 @@ class ChatPanel(ttk.Frame):
     def _finish(self, gen, err=None, stopped=False):
         self.gen = None
         self._set_busy(False)
-        if not err and gen.content_marked and gen.content_text:
-            # Durante el streaming se ve el texto crudo; al final se le da formato.
-            self.chat.configure(state="normal")
-            self.chat.delete("content_start", "end-1c")
-            self.chat.configure(state="disabled")
-            self._append_markdown(gen.content_text)
+        # Último redibujo: incluye lo que llegó después del último programado
+        # y, si se cortó por bucle, deja la respuesta ya recortada.
+        self._render_content(gen)
         self._append("\n")
         if err:
             self._note(f"Error: {err}", "error")
