@@ -9,6 +9,7 @@ from . import __version__
 from . import config as C
 from . import settings as S
 from . import theme
+from .log import log, log_path, setup as setup_log
 from .chat_panel import ChatPanel
 from .dialogs.benchmark import BenchmarkDialog
 from .dialogs.models import ModelsDialog
@@ -35,6 +36,8 @@ SHORTCUTS = (
 class App:
     def __init__(self, root):
         self.root = root
+        setup_log()
+        log.info("inicio llmEZ %s (Ollama %s)", __version__, C.OLLAMA_URL)
         self.client = OllamaClient(C.OLLAMA_URL)
         self._queue = queue.Queue()
         self.settings = S.load()
@@ -153,7 +156,8 @@ class App:
             "Acerca de llmEZ",
             f"llmEZ {__version__}\n\nApp para experimentar con LLMs locales en Ollama.\n\n"
             f"Ollama: {ollama} ({C.OLLAMA_URL})\n"
-            f"Configuración: {S.settings_path()}")
+            f"Configuración: {S.settings_path()}\n"
+            f"Registro: {log_path()}")
 
     # -------------------------------------------------------------------
     def _place_sash(self, paned, tries=0):
@@ -177,6 +181,7 @@ class App:
                     fn(*args)
                 except Exception:
                     traceback.print_exc()
+                    log.exception("error interno en la interfaz")
         except queue.Empty:
             pass
         self.root.after(30, self._poll)

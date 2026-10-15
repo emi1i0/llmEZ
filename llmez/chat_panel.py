@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import config as C
 from . import conversation, markdown
+from .log import log
 from .model_info import ModelInfo, fmt_bytes
 from .ollama_client import OllamaError
 from .repetition import RepetitionDetector
@@ -63,6 +64,7 @@ class Generation:
         self.loop_guard = None  # {'thinking': detector, 'content': detector} si está activo
         self.loop = None  # (tipo de texto, descripción) si se cortó por bucle
         self.temperature = None  # la pedida; None = la del modelo
+        self.seed = None
 
 
 class ChatPanel(ttk.Frame):
@@ -539,6 +541,7 @@ class ChatPanel(ttk.Frame):
         gen = Generation(model, think, num_ctx)
         gen.exclusive = self.app.exclusive_var.get()
         gen.temperature = options.get("temperature")
+        gen.seed = options.get("seed")
         if self.app.loop_guard_var.get():
             gen.loop_guard = {"thinking": RepetitionDetector(), "content": RepetitionDetector()}
         self.gen = gen
@@ -712,6 +715,7 @@ class ChatPanel(ttk.Frame):
         # y, si se cortó por bucle, deja la respuesta ya recortada.
         self._render_content(gen)
         self._append("\n")
+        self._log_outcome(gen, err, stopped)
         if err:
             self._note(f"Error: {err}", "error")
             if "does not support thinking" in str(err):
@@ -768,6 +772,25 @@ class ChatPanel(ttk.Frame):
                        "warn")
         self.app.monitor.set_last_stats(stats)
         self._set_status("Listo")
+
+    def _log_outcome(self, gen, err, stopped):
+        if err:
+            outcome = f"error: {err}"
+        elif gen.loop:
+            outcome = f"bucle en {gen.loop[0]}: {gen.loop[1]}"
+        elif stopped:
+            outcome = "detenida por el usuario"
+        else:
+            outcome = "completa"
+        log.info("respuesta %s | modelo=%s think=%s ctx=%s temp=%s seed=%s | %d chunks, "
+                 "%d chars de respuesta, %d de razonamiento",
+                 outcome, gen.model, gen.think, gen.num_ctx, gen.temperature, gen.seed,
+                 gen.n_chunks, len(gen.content_text), len(gen.thinking_text))
+        if gen.loop:
+            det = gen.loop_guard[gen.loop[0]]
+            start = det.loop_start or 0
+            log.info("bucle: texto desde el corte (para revisar falsos positivos):\n%s",
+                     det.text[max(0, start - 300):start + 1200])
 
     def _stats(self, gen, stopped):
         f = gen.final or {}

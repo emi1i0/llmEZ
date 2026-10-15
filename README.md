@@ -38,7 +38,7 @@ Es un proyecto personal de aprendizaje, pensado para entender qué pasa adentro 
 
 ![Benchmark de qwen3:0.6b, qwen3:4b y smollm2:135m](docs/benchmark.png)
 
-Las preferencias (modelo, contexto, temperatura, opciones, prompt de sistema, tamaño de ventana) se guardan en `~/.config/llmez/settings.json`.
+Las preferencias (modelo, contexto, temperatura, opciones, prompt de sistema, tamaño de ventana) se guardan en `~/.config/llmez/settings.json`. En `~/.local/state/llmez/llmez.log` queda un registro de cómo terminó cada respuesta (completa, detenida, cortada por bucle —con el texto repetido, para revisar falsos positivos— o con error) y de los errores internos.
 
 Si Ollama o `nvidia-smi` no están disponibles, la app no se rompe: muestra "n/d" o un aviso.
 
@@ -112,6 +112,7 @@ llmez/
 ├── markdown.py             markdown mínimo → estilos de tk.Text
 ├── conversation.py         guardar / abrir / exportar charlas
 ├── settings.py             preferencias en ~/.config/llmez
+├── log.py                  registro en ~/.local/state/llmez
 ├── theme.py                tema oscuro de ttk
 ├── config.py               URL, prompts, valores por defecto y colores
 ├── dialogs/                benchmark y gestión de modelos
